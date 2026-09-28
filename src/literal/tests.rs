@@ -2,21 +2,32 @@ use proptest::prelude::*;
 
 use super::*;
 
-/// Independent oracle: decodes one SQL string literal, or returns `None`.
-fn decode_string_literal(sql: &str) -> Option<String> {
-    let inner = sql.strip_prefix('\'')?.strip_suffix('\'')?;
+/// Independent oracle: decodes one quoted part, or returns `None`.
+fn decode_quoted(sql: &str, mark: char) -> Option<String> {
+    let inner = sql.strip_prefix(mark)?.strip_suffix(mark)?;
     let mut out = String::new();
     let mut chars = inner.chars();
     while let Some(c) = chars.next() {
-        if c == '\'' {
-            // Inside a literal, a quote must be doubled.
-            if chars.next() != Some('\'') {
-                return None;
-            }
+        // Inside the quotes, a mark must be doubled.
+        if c == mark && chars.next() != Some(mark) {
+            return None;
         }
         out.push(c);
     }
     Some(out)
+}
+
+fn decode_string_literal(sql: &str) -> Option<String> {
+    decode_quoted(sql, '\'')
+}
+
+/// Text with many SQL marks: quotes, comments, escapes and line ends.
+fn tricky_text() -> impl Strategy<Value = String> {
+    proptest::collection::vec(
+        proptest::sample::select(vec!["'", "''", "?", "\"", "`", "--", "/*", "*/", "\\", "\n", "\r", "\0", "é", "a", " "]),
+        0..20,
+    )
+    .prop_map(|parts: Vec<&str>| parts.concat())
 }
 
 #[test]
@@ -29,7 +40,7 @@ fn null_and_bool_encode_as_keywords() {
 #[test]
 fn integers_encode_as_digits() {
     assert_eq!(Param::Int(0).to_sql(), "0");
-    assert_eq!(Param::Int(-42).to_sql(), "-42");
+    assert_eq!(Param::Int(-42).to_sql(), "(-42)");
     assert_eq!(Param::Int(i64::MAX).to_sql(), "9223372036854775807");
 }
 
@@ -45,10 +56,10 @@ fn smallest_integer_uses_a_typed_literal() {
 #[test]
 fn doubles_encode_with_an_exponent() {
     assert_eq!(Param::Double(1.5).to_sql(), "1.5e0");
-    assert_eq!(Param::Double(-0.001).to_sql(), "-1e-3");
+    assert_eq!(Param::Double(-0.001).to_sql(), "(-1e-3)");
     assert_eq!(Param::Double(f64::NAN).to_sql(), "nan()");
     assert_eq!(Param::Double(f64::INFINITY).to_sql(), "infinity()");
-    assert_eq!(Param::Double(f64::NEG_INFINITY).to_sql(), "-infinity()");
+    assert_eq!(Param::Double(f64::NEG_INFINITY).to_sql(), "(-infinity())");
 }
 
 #[test]
@@ -128,6 +139,30 @@ fn timestamp_accepts_iso_timestamps_only() {
 }
 
 #[test]
+fn small_integer_and_float_conversions() {
+    assert_eq!(Param::from(-3_i8), Param::Int(-3));
+    assert_eq!(Param::from(3_i16), Param::Int(3));
+    assert_eq!(Param::from(3_u8), Param::Int(3));
+    assert_eq!(Param::from(3_u16), Param::Int(3));
+    assert_eq!(Param::from(0.5_f32), Param::Double(0.5));
+    assert_eq!(Param::from(i64::MAX as u64), Param::Int(i64::MAX));
+    assert_eq!(Param::from(i64::MAX as u64 + 1), Param::Decimal("9223372036854775808".into()));
+}
+
+#[test]
+fn decimal_edge_cases() {
+    assert!(Param::decimal("+1").is_err());
+    // 39 digits over the sign, the integer part and the fraction.
+    assert!(Param::decimal(format!("-{}.{}", "1".repeat(20), "2".repeat(19))).is_err());
+}
+
+#[test]
+fn date_checks_the_format_not_the_calendar() {
+    // Athena rejects a day that is not in the month.
+    assert!(Param::date("2024-02-31").is_ok());
+}
+
+#[test]
 fn conversions_pick_the_matching_kind() {
     assert_eq!(Param::from(7_i32), Param::Int(7));
     assert_eq!(Param::from(7_u32), Param::Int(7));
@@ -166,13 +201,16 @@ proptest! {
     #[test]
     fn any_finite_double_round_trips(v in any::<f64>().prop_filter("finite", |v| v.is_finite())) {
         let sql = Param::Double(v).to_sql();
-        let parsed: f64 = sql.parse().unwrap();
+        let text = sql.strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(&sql);
+        let parsed: f64 = text.parse().unwrap();
         prop_assert_eq!(parsed.to_bits(), v.to_bits());
     }
 
     #[test]
     fn any_integer_round_trips(v in (i64::MIN + 1)..=i64::MAX) {
-        prop_assert_eq!(Param::Int(v).to_sql().parse::<i64>().unwrap(), v);
+        let sql = Param::Int(v).to_sql();
+        let text = sql.strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(&sql);
+        prop_assert_eq!(text.parse::<i64>().unwrap(), v);
     }
 
     #[test]
@@ -188,9 +226,70 @@ proptest! {
     }
 
     #[test]
-    fn any_identifier_round_trips(s in ".+") {
+    fn any_identifier_round_trips(s in tricky_text().prop_filter("non-empty, no NUL", |s| !s.is_empty() && !s.contains('\0'))) {
         let quoted = quote_identifier(&s).unwrap();
-        let inner = quoted.strip_prefix('"').unwrap().strip_suffix('"').unwrap();
-        prop_assert_eq!(inner.replace("\"\"", "\""), s);
+        prop_assert_eq!(decode_quoted(&quoted, '"'), Some(s));
+    }
+
+    #[test]
+    fn tricky_text_is_one_literal(s in tricky_text()) {
+        let sql = Param::Text(s.clone()).to_sql();
+        prop_assert_eq!(decode_string_literal(&sql), Some(s));
+    }
+
+    #[test]
+    fn accepted_typed_text_has_only_digits_and_separators(
+        text in "[-+0-9.: a-z']{0,30}",
+    ) {
+        let ok = |t: &str| t.bytes().all(|b| b.is_ascii_digit() || b"-.: ".contains(&b));
+        for param in [Param::decimal(text.clone()), Param::date(text.clone()), Param::timestamp(text.clone())]
+            .into_iter()
+            .flatten()
+        {
+            let (Param::Decimal(t) | Param::Date(t) | Param::Timestamp(t)) = param else {
+                unreachable!("the constructors make these kinds only");
+            };
+            prop_assert!(ok(&t), "{t:?}");
+        }
+    }
+}
+
+#[test]
+fn unchecked_typed_variants_still_give_one_literal() {
+    // A caller can build the variants directly and skip validation.
+    let sql = Param::Date("2020-01-01' OR 1=1 OR '".into()).to_sql();
+    assert_eq!(sql, "DATE '2020-01-01'' OR 1=1 OR '''");
+    let sql = Param::Decimal("1'".into()).to_sql();
+    assert_eq!(sql, "DECIMAL '1'''");
+    let sql = Param::Timestamp("x'".into()).to_sql();
+    assert_eq!(sql, "TIMESTAMP 'x'''");
+}
+
+#[test]
+fn negative_numbers_are_in_parentheses() {
+    // `x - ?` must not become the comment `x --5`.
+    assert_eq!(Param::Int(-5).to_sql(), "(-5)");
+    assert_eq!(Param::Double(-1.5).to_sql(), "(-1.5e0)");
+    assert_eq!(Param::Double(f64::NEG_INFINITY).to_sql(), "(-infinity())");
+    assert_eq!(Param::Double(-0.0).to_sql(), "(-0e0)");
+}
+
+#[test]
+fn identifiers_with_nul_fail() {
+    assert!(quote_identifier("a\0b").is_err());
+}
+
+proptest! {
+    #[test]
+    fn any_unchecked_date_text_is_one_literal(s in any::<String>()) {
+        let sql = Param::Date(s.clone()).to_sql();
+        let literal = sql.strip_prefix("DATE ").unwrap();
+        prop_assert_eq!(decode_string_literal(literal), Some(s));
+    }
+
+    #[test]
+    fn no_encoded_value_starts_with_a_minus(v in any::<i64>(), d in any::<f64>()) {
+        prop_assert!(!Param::Int(v).to_sql().starts_with('-'));
+        prop_assert!(!Param::Double(d).to_sql().starts_with('-'));
     }
 }

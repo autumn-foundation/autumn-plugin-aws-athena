@@ -244,3 +244,122 @@ proptest! {
         prop_assert_eq!(value("varbinary", &raw), Value::Binary(bytes));
     }
 }
+
+#[test]
+fn a_signed_hex_pair_fails() {
+    assert!(parse(&col("c", "varbinary"), Some("+1 +f")).is_err());
+    assert!(parse(&col("c", "varbinary"), Some("-1")).is_err());
+    assert_eq!(value("varbinary", "AB cd"), Value::Binary(vec![0xab, 0xcd]));
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+enum Status {
+    #[serde(rename = "open")]
+    Open,
+}
+
+#[test]
+fn deserializes_hints_from_text_and_numbers() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Hints {
+        status: Status,
+        ratio: f32,
+        big: u64,
+        wide: u128,
+        count_as_float: f64,
+        maybe: Option<u64>,
+    }
+    let row = row(
+        &[
+            ("status", "varchar"),
+            ("ratio", "decimal(4,2)"),
+            ("big", "decimal(20,0)"),
+            ("wide", "decimal(38,0)"),
+            ("count_as_float", "bigint"),
+            ("maybe", "decimal(20,0)"),
+        ],
+        &[
+            Some("open"),
+            Some("0.25"),
+            Some("18446744073709551615"),
+            Some("99999999999999999999999999999999999999"),
+            Some("7"),
+            Some("5"),
+        ],
+    );
+    assert_eq!(
+        row.deserialize::<Hints>().unwrap(),
+        Hints {
+            status: Status::Open,
+            ratio: 0.25,
+            big: u64::MAX,
+            wide: 99_999_999_999_999_999_999_999_999_999_999_999_999,
+            count_as_float: 7.0,
+            maybe: Some(5),
+        }
+    );
+}
+
+#[test]
+fn hints_that_do_not_fit_fail() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct AsEnum {
+        status: Status,
+    }
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct AsInt {
+        v: i64,
+    }
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct AsFloat {
+        v: f64,
+    }
+    assert!(row(&[("status", "bigint")], &[Some("1")]).deserialize::<AsEnum>().is_err());
+    assert!(row(&[("v", "decimal(4,2)")], &[Some("12.00")]).deserialize::<AsInt>().is_err());
+    // 2^53 + 1 has no exact f64.
+    assert!(row(&[("v", "bigint")], &[Some("9007199254740993")]).deserialize::<AsFloat>().is_err());
+}
+
+#[test]
+fn a_tuple_must_match_the_row_width() {
+    let row = row(&[("a", "bigint"), ("b", "bigint")], &[Some("1"), Some("2")]);
+    assert!(row.deserialize::<(i64,)>().is_err());
+    assert!(row.deserialize::<(i64, i64, i64)>().is_err());
+}
+
+#[test]
+fn duplicate_labels_fail_for_a_struct() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Id {
+        id: i64,
+    }
+    let row = row(&[("id", "bigint"), ("id", "bigint")], &[Some("1"), Some("2")]);
+    let err = row.deserialize::<Id>().unwrap_err();
+    assert_eq!(err.column(), "");
+    assert!(err.to_string().contains("duplicate field"), "{err}");
+}
+
+#[test]
+fn an_optional_row_struct_is_some() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Id {
+        id: i64,
+    }
+    let row = row(&[("id", "bigint")], &[Some("1")]);
+    assert_eq!(row.deserialize::<Option<Id>>().unwrap(), Some(Id { id: 1 }));
+}
+
+#[test]
+fn a_decode_error_names_the_field() {
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct Id {
+        id: i64,
+    }
+    let err = row(&[("id", "varchar")], &[Some("abc")]).deserialize::<Id>().unwrap_err();
+    assert!(err.to_string().contains("abc"), "{err}");
+}
