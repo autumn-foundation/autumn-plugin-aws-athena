@@ -74,14 +74,20 @@ impl QueryState {
     /// Parses an Athena state name.
     #[must_use]
     pub fn parse(name: &str) -> Self {
-        let _ = name;
-        todo!()
+        match name {
+            "QUEUED" => Self::Queued,
+            "RUNNING" => Self::Running,
+            "SUCCEEDED" => Self::Succeeded,
+            "FAILED" => Self::Failed,
+            "CANCELLED" => Self::Cancelled,
+            other => Self::Unknown(other.to_owned()),
+        }
     }
 
     /// Returns `true` if the query can not change state again.
     #[must_use]
     pub const fn is_terminal(&self) -> bool {
-        todo!()
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -172,7 +178,10 @@ impl Column {
     /// Makes a column.
     #[must_use]
     pub fn new(name: impl Into<String>, type_name: impl Into<String>) -> Self {
-        Self { name: name.into(), type_name: type_name.into() }
+        Self {
+            name: name.into(),
+            type_name: type_name.into(),
+        }
     }
 }
 
@@ -203,7 +212,10 @@ impl ApiError {
     /// Makes an error.
     #[must_use]
     pub fn new(operation: &'static str, message: impl Into<String>) -> Self {
-        Self { operation, message: message.into() }
+        Self {
+            operation,
+            message: message.into(),
+        }
     }
 }
 

@@ -1,4 +1,9 @@
 //! Turns result pages into rows.
+//!
+//! # Contract
+//!
+//! - Row one of page one is a header only for DML or unknown statements with the exact labels.
+//! - Each row has one value for each column. A different width is an error.
 
 use std::sync::Arc;
 
@@ -13,8 +18,13 @@ pub(crate) fn is_header(
     columns: &[Column],
     first_row: &[Option<String>],
 ) -> bool {
-    let _ = (statement, columns, first_row);
-    todo!()
+    let may_have_header = matches!(statement, StatementType::Dml | StatementType::Unknown);
+    may_have_header
+        && columns.len() == first_row.len()
+        && columns
+            .iter()
+            .zip(first_row)
+            .all(|(column, value)| value.as_deref() == Some(column.name.as_str()))
 }
 
 /// Decodes the raw rows of one page.
@@ -22,8 +32,26 @@ pub(crate) fn decode_rows(
     columns: &Arc<[Column]>,
     rows: Vec<Vec<Option<String>>>,
 ) -> Result<Vec<Row>, DecodeError> {
-    let _ = (columns, rows);
-    todo!()
+    rows.into_iter()
+        .map(|raw| {
+            if raw.len() != columns.len() {
+                return Err(DecodeError::new(
+                    "",
+                    format!(
+                        "the row has {} values for {} columns",
+                        raw.len(),
+                        columns.len()
+                    ),
+                ));
+            }
+            let values = columns
+                .iter()
+                .zip(&raw)
+                .map(|(column, value)| crate::value::parse(column, value.as_deref()))
+                .collect::<Result<_, _>>()?;
+            Ok(Row::new(Arc::clone(columns), values))
+        })
+        .collect()
 }
 
 #[cfg(test)]

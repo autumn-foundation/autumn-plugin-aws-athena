@@ -47,16 +47,25 @@ fn parses_floating_types() {
     assert_eq!(value("real", "0.25"), Value::Double(0.25));
     assert!(matches!(value("double", "NaN"), Value::Double(v) if v.is_nan()));
     assert_eq!(value("double", "Infinity"), Value::Double(f64::INFINITY));
-    assert_eq!(value("double", "-Infinity"), Value::Double(f64::NEG_INFINITY));
+    assert_eq!(
+        value("double", "-Infinity"),
+        Value::Double(f64::NEG_INFINITY)
+    );
 }
 
 #[test]
 fn parses_other_scalar_types() {
     assert_eq!(value("boolean", "true"), Value::Bool(true));
     assert_eq!(value("boolean", "false"), Value::Bool(false));
-    assert_eq!(value("decimal(10,2)", "12.50"), Value::Decimal("12.50".into()));
+    assert_eq!(
+        value("decimal(10,2)", "12.50"),
+        Value::Decimal("12.50".into())
+    );
     assert_eq!(value("decimal", "12.50"), Value::Decimal("12.50".into()));
-    assert_eq!(value("date", "2024-01-02"), Value::Date("2024-01-02".into()));
+    assert_eq!(
+        value("date", "2024-01-02"),
+        Value::Date("2024-01-02".into())
+    );
     assert_eq!(
         value("timestamp", "2024-01-02 03:04:05.000"),
         Value::Timestamp("2024-01-02 03:04:05.000".into())
@@ -69,14 +78,23 @@ fn parses_other_scalar_types() {
 
 #[test]
 fn parses_varbinary_hex_pairs() {
-    assert_eq!(value("varbinary", "68 65 0a"), Value::Binary(vec![0x68, 0x65, 0x0a]));
+    assert_eq!(
+        value("varbinary", "68 65 0a"),
+        Value::Binary(vec![0x68, 0x65, 0x0a])
+    );
     assert_eq!(value("varbinary", ""), Value::Binary(Vec::new()));
 }
 
 #[test]
 fn keeps_complex_types_as_text() {
-    assert_eq!(value("array(integer)", "[1, 2]"), Value::Text("[1, 2]".into()));
-    assert_eq!(value("map(varchar,integer)", "{a=1}"), Value::Text("{a=1}".into()));
+    assert_eq!(
+        value("array(integer)", "[1, 2]"),
+        Value::Text("[1, 2]".into())
+    );
+    assert_eq!(
+        value("map(varchar,integer)", "{a=1}"),
+        Value::Text("{a=1}".into())
+    );
     assert_eq!(value("json", "{\"a\":1}"), Value::Text("{\"a\":1}".into()));
 }
 
@@ -97,7 +115,10 @@ fn bad_text_gives_an_error_that_names_the_column() {
 
 #[test]
 fn get_finds_a_value_by_label() {
-    let row = row(&[("id", "bigint"), ("name", "varchar")], &[Some("7"), Some("x")]);
+    let row = row(
+        &[("id", "bigint"), ("name", "varchar")],
+        &[Some("7"), Some("x")],
+    );
     assert_eq!(row.get("name"), Some(&Value::Text("x".into())));
     assert_eq!(row.get("id"), Some(&Value::Int(7)));
     assert_eq!(row.get("missing"), None);
@@ -124,18 +145,38 @@ fn deserializes_a_struct_by_label() {
             ("note", "varchar"),
             ("qty", "integer"),
         ],
-        &[Some("1"), Some("c-1"), Some("9.95"), Some("true"), None, Some("3")],
+        &[
+            Some("1"),
+            Some("c-1"),
+            Some("9.95"),
+            Some("true"),
+            None,
+            Some("3"),
+        ],
     );
     assert_eq!(
         row.deserialize::<Order>().unwrap(),
-        Order { id: 1, customer: "c-1".into(), total: 9.95, paid: true, note: None, qty: 3 }
+        Order {
+            id: 1,
+            customer: "c-1".into(),
+            total: 9.95,
+            paid: true,
+            note: None,
+            qty: 3
+        }
     );
 }
 
 #[test]
 fn deserializes_a_tuple_by_position() {
-    let row = row(&[("a", "bigint"), ("b", "varchar")], &[Some("2"), Some("x")]);
-    assert_eq!(row.deserialize::<(i64, String)>().unwrap(), (2, "x".to_owned()));
+    let row = row(
+        &[("a", "bigint"), ("b", "varchar")],
+        &[Some("2"), Some("x")],
+    );
+    assert_eq!(
+        row.deserialize::<(i64, String)>().unwrap(),
+        (2, "x".to_owned())
+    );
 }
 
 #[test]
@@ -160,12 +201,12 @@ fn deserializes_binary_into_bytes() {
 
 #[test]
 fn deserialize_errors_are_decode_errors() {
-    let row = row(&[("id", "varchar")], &[Some("abc")]);
     #[derive(Debug, Deserialize)]
     struct Id {
         #[allow(dead_code)]
         id: i64,
     }
+    let row = row(&[("id", "varchar")], &[Some("abc")]);
     assert!(row.deserialize::<Id>().is_err());
     let row = row_null_id();
     assert!(row.deserialize::<Id>().is_err());

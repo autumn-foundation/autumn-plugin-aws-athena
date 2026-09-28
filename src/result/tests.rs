@@ -13,14 +13,30 @@ fn raw(values: &[Option<&str>]) -> Vec<Option<String>> {
 
 #[test]
 fn a_dml_row_with_the_labels_is_a_header() {
-    assert!(is_header(StatementType::Dml, &columns(), &raw(&[Some("id"), Some("name")])));
+    assert!(is_header(
+        StatementType::Dml,
+        &columns(),
+        &raw(&[Some("id"), Some("name")])
+    ));
 }
 
 #[test]
 fn a_row_with_other_values_is_data() {
-    assert!(!is_header(StatementType::Dml, &columns(), &raw(&[Some("1"), Some("name")])));
-    assert!(!is_header(StatementType::Dml, &columns(), &raw(&[Some("id"), None])));
-    assert!(!is_header(StatementType::Dml, &columns(), &raw(&[Some("id")])));
+    assert!(!is_header(
+        StatementType::Dml,
+        &columns(),
+        &raw(&[Some("1"), Some("name")])
+    ));
+    assert!(!is_header(
+        StatementType::Dml,
+        &columns(),
+        &raw(&[Some("id"), None])
+    ));
+    assert!(!is_header(
+        StatementType::Dml,
+        &columns(),
+        &raw(&[Some("id")])
+    ));
 }
 
 #[test]
