@@ -166,3 +166,27 @@ fn an_invalid_config_stops_the_boot() {
     config.page_size = 5000;
     let _ = app(&FakeAthena::new(), config);
 }
+
+#[tokio::test]
+async fn the_start_of_shutdown_stops_open_queries() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending());
+    let client = app(&fake, config());
+    let athena = Athena::from_state(client.state()).unwrap();
+    let task = tokio::spawn(async move { athena.query("SELECT 1").execute().await });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Autumn marks the shutdown before it drains the requests.
+    client.state().begin_shutdown_for_test();
+    let err = task.await.unwrap().unwrap_err();
+    assert!(
+        matches!(err, AthenaError::ShuttingDown | AthenaError::Cancelled { .. }),
+        "{err:?}"
+    );
+    for _ in 0..100 {
+        if !fake.stopped().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(fake.stopped()[0], "fake-1");
+}

@@ -15,6 +15,12 @@ pub(crate) struct WorkgroupCheck {
     pub(crate) shared: Arc<Shared>,
 }
 
+impl WorkgroupCheck {
+    pub(crate) const fn new(shared: Arc<Shared>) -> Self {
+        Self { shared }
+    }
+}
+
 impl HealthIndicator for WorkgroupCheck {
     fn check(&self) -> BoxFuture<'_, HealthCheckOutput> {
         Box::pin(async move {
@@ -36,3 +42,6 @@ impl HealthIndicator for WorkgroupCheck {
 fn detail(key: &str, value: &str) -> HashMap<String, serde_json::Value> {
     HashMap::from([(key.to_owned(), serde_json::Value::from(value))])
 }
+
+#[cfg(test)]
+mod tests;

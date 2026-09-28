@@ -268,3 +268,127 @@ fn each_field_has_an_environment_variable() {
     leaves.sort();
     assert_eq!(fields, leaves);
 }
+
+#[test]
+fn plain_http_is_for_a_local_endpoint_only() {
+    assert!(invalid(|c| c.endpoint_url = Some("http://athena.example.com".into())).contains("endpoint_url"));
+    for local in ["http://localhost:4566", "http://127.0.0.1:4566", "http://[::1]:4566"] {
+        let mut config = AthenaConfig::default();
+        config.endpoint_url = Some(local.into());
+        config.validate().unwrap();
+    }
+    let mut config = AthenaConfig::default();
+    config.endpoint_url = Some("https://athena.example.com".into());
+    config.validate().unwrap();
+}
+
+#[test]
+fn the_bucket_owner_is_an_account_id() {
+    assert!(invalid(|c| c.expected_bucket_owner = Some("12345".into())).contains("expected_bucket_owner"));
+    assert!(invalid(|c| c.expected_bucket_owner = Some("12345678901x".into())).contains("expected_bucket_owner"));
+    let mut config = AthenaConfig::default();
+    config.expected_bucket_owner = Some("123456789012".into());
+    config.validate().unwrap();
+}
+
+#[test]
+fn the_byte_limit_must_be_positive() {
+    assert!(invalid(|c| c.max_result_bytes = 0).contains("max_result_bytes"));
+}
+
+#[test]
+fn validation_boundaries_pass() {
+    let mut config = AthenaConfig::default();
+    config.workgroup = "w".repeat(128);
+    config.poll.max_ms = config.poll.initial_ms;
+    config.poll.multiplier = 1.0;
+    config.page_size = 1;
+    config.max_concurrent_queries = 0;
+    config.validate().unwrap();
+    assert!(invalid(|c| c.poll.multiplier = f64::INFINITY).contains("poll.multiplier"));
+}
+
+#[test]
+fn errors_name_a_custom_section() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "autumn.toml", "[reports]\npage_size = 0\n");
+    let err = AthenaConfig::resolve_with_env("reports", &env_for(dir.path())).unwrap_err();
+    assert!(err.to_string().contains("reports.page_size"), "{err}");
+}
+
+#[test]
+fn a_section_name_with_a_dash_gives_a_valid_variable() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = env_for(dir.path()).with("AUTUMN_ATHENA_REPORTS__DATABASE", "r");
+    let config = AthenaConfig::resolve_with_env("athena-reports", &env).unwrap();
+    assert_eq!(config.database.as_deref(), Some("r"));
+}
+
+#[test]
+fn the_canonical_inline_profile_wins_over_its_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "autumn.toml",
+        "[profile.production.athena]\ndatabase = \"alias\"\n[profile.prod.athena]\ndatabase = \"canonical\"\n",
+    );
+    let env = env_for(dir.path()).with("AUTUMN_ENV", "prod");
+    let config = AthenaConfig::resolve_with_env("athena", &env).unwrap();
+    assert_eq!(config.database.as_deref(), Some("canonical"));
+}
+
+#[test]
+fn a_release_build_uses_the_prod_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "autumn.toml", "[profile.prod.athena]\ndatabase = \"p\"\n");
+    let env = env_for(dir.path()).with("AUTUMN_IS_DEBUG", "0");
+    let config = AthenaConfig::resolve_with_env("athena", &env).unwrap();
+    assert_eq!(config.database.as_deref(), Some("p"));
+}
+
+#[test]
+fn only_the_first_profile_file_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "autumn-prod.toml", "[athena]\ndatabase = \"prod\"\n");
+    write(dir.path(), "autumn-production.toml", "[athena]\ndatabase = \"production\"\nmax_rows = 3\n");
+    let env = env_for(dir.path()).with("AUTUMN_ENV", "prod");
+    let config = AthenaConfig::resolve_with_env("athena", &env).unwrap();
+    assert_eq!(config.database.as_deref(), Some("prod"));
+    assert_eq!(config.max_rows, 10_000);
+}
+
+#[test]
+fn environment_values_parse_by_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = env_for(dir.path());
+    let config = AthenaConfig::resolve_with_env(
+        "athena",
+        &base.clone().with("AUTUMN_ATHENA__HEALTH_CHECK", "0").with("AUTUMN_ATHENA__CANCEL_ON_DROP", "1"),
+    )
+    .unwrap();
+    assert!(!config.health_check);
+    assert!(config.cancel_on_drop);
+    for (key, value) in [
+        ("AUTUMN_ATHENA__HEALTH_CHECK", "yes"),
+        ("AUTUMN_ATHENA__POLL__MULTIPLIER", "fast"),
+        ("AUTUMN_ATHENA__MAX_ROWS", "-1"),
+    ] {
+        let err = AthenaConfig::resolve_with_env("athena", &base.clone().with(key, value)).unwrap_err();
+        assert!(err.to_string().contains(key), "{key}: {err}");
+    }
+}
+
+#[test]
+fn an_environment_path_through_a_value_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "autumn.toml", "[athena]\npoll = 5\n");
+    let env = env_for(dir.path()).with("AUTUMN_ATHENA__POLL__MAX_MS", "10");
+    assert!(AthenaConfig::resolve_with_env("athena", &env).is_err());
+}
+
+#[test]
+fn a_config_path_that_is_a_directory_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("autumn.toml")).unwrap();
+    assert!(AthenaConfig::resolve_with_env("athena", &env_for(dir.path())).is_err());
+}
