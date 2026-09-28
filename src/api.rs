@@ -33,7 +33,7 @@ pub trait AthenaApi: Send + Sync + 'static {
 }
 
 /// The input of [`AthenaApi::start`].
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct StartRequest {
     /// The SQL text.
@@ -50,6 +50,23 @@ pub struct StartRequest {
     pub output_location: Option<String>,
     /// The maximum age in minutes of a reused result. `None` disables reuse.
     pub reuse_max_age_minutes: Option<i32>,
+    /// The idempotency token. A second start with the same token gives the same query.
+    pub client_request_token: Option<String>,
+}
+
+/// Shows the SQL length and the parameter count only. The values can be personal data.
+impl std::fmt::Debug for StartRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StartRequest")
+            .field("sql_len", &self.sql.len())
+            .field("params", &self.parameters.len())
+            .field("workgroup", &self.workgroup)
+            .field("catalog", &self.catalog)
+            .field("database", &self.database)
+            .field("output_location", &self.output_location)
+            .field("reuse_max_age_minutes", &self.reuse_max_age_minutes)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The state of a query.
@@ -206,15 +223,28 @@ pub struct ApiError {
     pub operation: &'static str,
     /// The error message.
     pub message: String,
+    /// A retry of the call can succeed, for example after a throttle or a network error.
+    pub retryable: bool,
 }
 
 impl ApiError {
-    /// Makes an error.
+    /// Makes an error that a retry can clear.
     #[must_use]
     pub fn new(operation: &'static str, message: impl Into<String>) -> Self {
         Self {
             operation,
             message: message.into(),
+            retryable: true,
+        }
+    }
+
+    /// Makes an error that a retry does not clear, for example a denied access.
+    #[must_use]
+    pub fn permanent(operation: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            operation,
+            message: message.into(),
+            retryable: false,
         }
     }
 }

@@ -41,6 +41,7 @@ async fn start_sends_each_setting() {
                     == Some("s3://out/")
                 && reuse.enabled()
                 && reuse.max_age_in_minutes() == Some(30)
+                && input.client_request_token() == Some("0123456789abcdef0123456789abcdef")
         })
         .then_output(|| {
             StartQueryExecutionOutput::builder()
@@ -55,6 +56,7 @@ async fn start_sends_each_setting() {
         database: Some("sales".into()),
         output_location: Some("s3://out/".into()),
         reuse_max_age_minutes: Some(30),
+        client_request_token: Some("0123456789abcdef0123456789abcdef".into()),
     };
     assert_eq!(athena(&[&rule]).start(request).await.unwrap(), "q-1");
     assert_eq!(rule.num_calls(), 1);

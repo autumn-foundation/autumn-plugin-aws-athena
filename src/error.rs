@@ -48,10 +48,10 @@ pub enum AthenaError {
         query_id: String,
     },
     /// The query did not complete in time. The plugin stopped it.
-    #[error("query {query_id} did not complete in {timeout:?}")]
+    #[error("the query did not complete in {timeout:?}")]
     Timeout {
-        /// The query ID.
-        query_id: String,
+        /// The query ID. It is `None` if the start did not complete in time.
+        query_id: Option<String>,
         /// The timeout.
         timeout: Duration,
     },
@@ -63,6 +63,17 @@ pub enum AthenaError {
         /// The row limit.
         limit: usize,
     },
+    /// The values of the result have more bytes than the limit.
+    #[error("query {query_id} returned more than {limit_bytes} bytes")]
+    ResultTooLarge {
+        /// The query ID.
+        query_id: String,
+        /// The byte limit.
+        limit_bytes: usize,
+    },
+    /// The app shuts down. The plugin starts no new queries.
+    #[error("the app shuts down: the Athena plugin starts no new queries")]
+    ShuttingDown,
     /// A result value does not decode.
     #[error(transparent)]
     Decode(#[from] DecodeError),
@@ -78,8 +89,9 @@ impl AthenaError {
         match self {
             Self::Failed { query_id, .. }
             | Self::Cancelled { query_id }
-            | Self::Timeout { query_id, .. }
-            | Self::TooManyRows { query_id, .. } => Some(query_id),
+            | Self::TooManyRows { query_id, .. }
+            | Self::ResultTooLarge { query_id, .. } => Some(query_id),
+            Self::Timeout { query_id, .. } => query_id.as_deref(),
             _ => None,
         }
     }
@@ -118,3 +130,19 @@ impl AthenaError {
 
 #[cfg(test)]
 mod tests;
+
+/// Adds [`or_http`](AthenaResultExt::or_http) to `Result<T, AthenaError>`.
+pub trait AthenaResultExt<T> {
+    /// Converts the error with [`AthenaError::into_autumn`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the converted error.
+    fn or_http(self) -> Result<T, AutumnError>;
+}
+
+impl<T> AthenaResultExt<T> for Result<T, AthenaError> {
+    fn or_http(self) -> Result<T, AutumnError> {
+        self.map_err(AthenaError::into_autumn)
+    }
+}

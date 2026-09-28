@@ -247,7 +247,7 @@ proptest! {
         text in "[-+0-9.: a-z']{0,30}",
     ) {
         let ok = |t: &str| t.bytes().all(|b| b.is_ascii_digit() || b"-.: ".contains(&b));
-        for param in [Param::decimal(text.clone()), Param::date(text.clone()), Param::timestamp(text.clone())]
+        for param in [Param::decimal(text.clone()), Param::date(text.clone()), Param::timestamp(text)]
             .into_iter()
             .flatten()
         {

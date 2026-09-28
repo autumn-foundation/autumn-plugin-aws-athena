@@ -82,6 +82,12 @@ pub struct AthenaConfig {
     pub timeout_ms: u64,
     /// The most rows that one query can return.
     pub max_rows: usize,
+    /// The most bytes of values that one query can return.
+    pub max_result_bytes: usize,
+    /// The most queries that can run at the same time in this process. `0` removes the limit.
+    pub max_concurrent_queries: usize,
+    /// The AWS account ID that must own the result bucket.
+    pub expected_bucket_owner: Option<String>,
     /// The rows in each results page, from 1 to 1000.
     pub page_size: i32,
     /// The maximum age in minutes of a reused result. `0` disables reuse.
@@ -105,6 +111,9 @@ impl Default for AthenaConfig {
             output_location: None,
             timeout_ms: 300_000,
             max_rows: 10_000,
+            max_result_bytes: 64 * 1024 * 1024,
+            max_concurrent_queries: 16,
+            expected_bucket_owner: None,
             page_size: 1000,
             reuse_max_age_minutes: 0,
             health_check: true,
@@ -133,6 +142,9 @@ const LEAVES: &[(&str, Kind)] = &[
     ("output_location", Kind::Text),
     ("timeout_ms", Kind::Integer),
     ("max_rows", Kind::Integer),
+    ("max_result_bytes", Kind::Integer),
+    ("max_concurrent_queries", Kind::Integer),
+    ("expected_bucket_owner", Kind::Text),
     ("page_size", Kind::Integer),
     ("reuse_max_age_minutes", Kind::Integer),
     ("health_check", Kind::Bool),

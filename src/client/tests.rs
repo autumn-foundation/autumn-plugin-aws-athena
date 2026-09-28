@@ -251,7 +251,7 @@ async fn a_cancelled_query_is_an_error() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn unknown_states_keep_the_poll_going() {
+async fn unknown_states_keep_the_poll_going_with_backoff() {
     let fake = FakeAthena::new();
     fake.push(FakeQuery::succeeded().states([
         QueryState::Queued,
@@ -259,7 +259,10 @@ async fn unknown_states_keep_the_poll_going() {
         QueryState::Running,
         QueryState::Succeeded,
     ]));
+    let started = tokio::time::Instant::now();
     athena(&fake).query("SELECT 1").execute().await.unwrap();
+    // The poll delays are 200, 400, 800 and 1600 ms.
+    assert_eq!(started.elapsed(), Duration::from_millis(3000));
 }
 
 #[tokio::test(start_paused = true)]
@@ -274,15 +277,14 @@ async fn the_timeout_stops_the_query() {
         .execute()
         .await
         .unwrap_err();
-    assert_eq!(
-        err,
-        AthenaError::Timeout {
-            query_id: "fake-1".into(),
-            timeout: Duration::from_secs(5)
-        }
+    assert_eq!(err.query_id(), Some("fake-1"));
+    assert!(
+        matches!(err, AthenaError::Timeout { timeout, .. } if timeout == Duration::from_secs(5))
     );
+    settle().await;
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
-    assert!(started.elapsed() <= Duration::from_secs(5) + Duration::from_millis(10));
+    assert!(started.elapsed() >= Duration::from_secs(5));
+    assert!(started.elapsed() <= Duration::from_secs(6));
     assert_eq!(athena.open_queries(), 0);
 }
 
@@ -436,4 +438,369 @@ fn new_rejects_an_invalid_config() {
     config.page_size = 0;
     let err = Athena::new(FakeAthena::new(), config).unwrap_err();
     assert!(matches!(err, AthenaError::Config(_)), "{err:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_huge_timeout_does_not_panic() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::succeeded());
+    athena(&fake)
+        .query("SELECT 1")
+        .timeout(Duration::MAX)
+        .execute()
+        .await
+        .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_zero_timeout_fails_before_the_start() {
+    let fake = FakeAthena::new();
+    let err = athena(&fake)
+        .query("SELECT 1")
+        .timeout(Duration::ZERO)
+        .execute()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AthenaError::Config(_)), "{err:?}");
+    assert!(fake.started().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn reuse_over_seven_days_fails_before_the_start() {
+    let fake = FakeAthena::new();
+    let err = athena(&fake)
+        .query("SELECT 1")
+        .reuse_results(10_081)
+        .execute()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AthenaError::Config(_)), "{err:?}");
+    assert!(fake.started().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn reuse_is_off_for_a_query_with_parameters() {
+    // Athena can reuse a result for other parameter values.
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::succeeded());
+    athena(&fake)
+        .query("SELECT ?")
+        .bind(1)
+        .reuse_results(60)
+        .execute()
+        .await
+        .unwrap();
+    assert_eq!(fake.started()[0].reuse_max_age_minutes, None);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_parameter_over_1024_characters_fails_before_the_start() {
+    let fake = FakeAthena::new();
+    let err = athena(&fake)
+        .query("SELECT ?")
+        .bind("x".repeat(1023))
+        .execute()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AthenaError::Param(_)), "{err:?}");
+    assert!(fake.started().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_start_has_a_client_request_token() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::succeeded());
+    fake.push(FakeQuery::succeeded());
+    let athena = athena(&fake);
+    athena.query("SELECT 1").execute().await.unwrap();
+    athena.query("SELECT 1").execute().await.unwrap();
+    let tokens: Vec<_> = fake
+        .started()
+        .into_iter()
+        .map(|r| r.client_request_token.unwrap())
+        .collect();
+    assert!(
+        tokens.iter().all(|t| (32..=128).contains(&t.len())),
+        "{tokens:?}"
+    );
+    assert_ne!(tokens[0], tokens[1]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hung_start_times_out_and_the_query_stops() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending().start_delay(Duration::from_secs(60)));
+    let athena = athena(&fake);
+    let err = athena
+        .query("SELECT 1")
+        .timeout(Duration::from_secs(5))
+        .execute()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AthenaError::Timeout { .. }), "{err:?}");
+    assert_eq!(err.query_id(), None);
+    // A second start with the same token finds the query. Then the plugin stops it.
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_a_query_during_the_start_stops_it() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending().start_delay(Duration::from_secs(10)));
+    let athena = athena(&fake);
+    let task = tokio::spawn({
+        let athena = athena.clone();
+        async move { athena.query("SELECT 1").execute().await }
+    });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    task.abort();
+    let _ = task.await;
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hung_status_call_times_out_and_stops() {
+    use autumn_web::actuator::MetricsSource;
+    let fake = FakeAthena::new();
+    fake.push(
+        FakeQuery::pending()
+            .data_scanned(500)
+            .status_delay(Duration::from_secs(60)),
+    );
+    let athena = athena(&fake);
+    let started = tokio::time::Instant::now();
+    let err = athena
+        .query("SELECT 1")
+        .timeout(Duration::from_secs(5))
+        .execute()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AthenaError::Timeout { .. }), "{err:?}");
+    assert!(
+        started.elapsed() <= Duration::from_secs(6),
+        "{:?}",
+        started.elapsed()
+    );
+    settle().await;
+    assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
+    let families = athena.metrics().collect();
+    let total = families
+        .iter()
+        .find(|f| f.name == "athena_queries_total")
+        .unwrap();
+    let timed_out = total
+        .samples
+        .iter()
+        .find(|s| s.labels[0].1 == "timed_out")
+        .unwrap();
+    assert!((timed_out.value - 1.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_timeout_records_the_bytes_of_the_last_poll() {
+    use autumn_web::actuator::MetricsSource;
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending().data_scanned(500));
+    let athena = athena(&fake);
+    athena
+        .query("SELECT 1")
+        .timeout(Duration::from_secs(5))
+        .execute()
+        .await
+        .unwrap_err();
+    let families = athena.metrics().collect();
+    let scanned = families
+        .iter()
+        .find(|f| f.name == "athena_data_scanned_bytes_total")
+        .unwrap();
+    assert!((scanned.samples[0].value - 500.0).abs() < f64::EPSILON);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_results_read_is_a_timeout() {
+    let fake = FakeAthena::new();
+    fake.push(orders().results_delay(Duration::from_secs(60)));
+    let err = athena(&fake)
+        .query("SELECT 1")
+        .timeout(Duration::from_secs(5))
+        .fetch()
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AthenaError::Timeout { .. }), "{err:?}");
+    assert_eq!(err.query_id(), Some("fake-1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn transient_status_errors_keep_the_poll_going() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::succeeded().failing_polls(2));
+    athena(&fake).query("SELECT 1").execute().await.unwrap();
+    assert!(fake.stopped().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_permanent_status_error_stops_the_query_at_once() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending().status_error_permanent("AccessDenied"));
+    let athena = athena(&fake);
+    let err = athena.query("SELECT 1").execute().await.unwrap_err();
+    assert!(
+        matches!(err, AthenaError::Api(ref e) if !e.retryable),
+        "{err:?}"
+    );
+    assert_eq!(err.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+    settle().await;
+    assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_label_row_on_a_later_page_is_data() {
+    let fake = FakeAthena::new();
+    fake.push(
+        FakeQuery::succeeded()
+            .columns(&[("n", "varchar")])
+            .row(&[Some("a")])
+            .row(&[Some("n")]),
+    );
+    let mut config = config();
+    config.page_size = 2;
+    let athena = Athena::new(fake.clone(), config).unwrap();
+    let output = athena.query("SELECT n").fetch().await.unwrap();
+    let values: Vec<_> = output.rows.iter().map(|r| r.values()[0].clone()).collect();
+    assert_eq!(
+        values,
+        vec![Value::Text("a".into()), Value::Text("n".into())]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_result_over_the_byte_limit_fails() {
+    let fake = FakeAthena::new();
+    fake.push(orders());
+    let mut config = config();
+    config.max_result_bytes = 4;
+    let athena = Athena::new(fake.clone(), config).unwrap();
+    let err = athena.query("SELECT 1").fetch().await.unwrap_err();
+    assert!(
+        matches!(err, AthenaError::ResultTooLarge { limit_bytes: 4, .. }),
+        "{err:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_concurrency_limit_holds_a_query_back() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending());
+    fake.push(FakeQuery::succeeded());
+    let mut config = config();
+    config.max_concurrent_queries = 1;
+    let athena = Athena::new(fake.clone(), config).unwrap();
+    let first = tokio::spawn({
+        let athena = athena.clone();
+        async move {
+            athena
+                .query("SELECT 1")
+                .timeout(Duration::from_secs(5))
+                .execute()
+                .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let second = tokio::spawn({
+        let athena = athena.clone();
+        async move { athena.query("SELECT 2").execute().await }
+    });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(fake.started().len(), 1);
+    assert!(first.await.unwrap().is_err());
+    second.await.unwrap().unwrap();
+    assert_eq!(fake.started().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_stops_open_queries_and_refuses_new_ones() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending());
+    let athena = athena(&fake);
+    let task = tokio::spawn({
+        let athena = athena.clone();
+        async move { athena.query("SELECT 1").execute().await }
+    });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    athena.shutdown().await;
+    assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
+    assert!(task.await.unwrap().is_err());
+    let err = athena.query("SELECT 1").execute().await.unwrap_err();
+    assert!(matches!(err, AthenaError::ShuttingDown), "{err:?}");
+    assert_eq!(fake.started().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_all_with_no_open_queries_calls_nothing() {
+    let fake = FakeAthena::new();
+    athena(&fake).stop_all().await;
+    assert!(fake.stopped().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dropped_query_counts_as_cancelled() {
+    use autumn_web::actuator::MetricsSource;
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending());
+    let athena = athena(&fake);
+    let task = tokio::spawn({
+        let athena = athena.clone();
+        async move { athena.query("SELECT 1").execute().await }
+    });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    task.abort();
+    let _ = task.await;
+    let families = athena.metrics().collect();
+    let total = families
+        .iter()
+        .find(|f| f.name == "athena_queries_total")
+        .unwrap();
+    let cancelled = total
+        .samples
+        .iter()
+        .find(|s| s.labels[0].1 == "cancelled")
+        .unwrap();
+    assert!((cancelled.value - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn dropping_a_query_with_no_runtime_does_not_panic() {
+    let fake = FakeAthena::new();
+    fake.push(FakeQuery::pending());
+    let athena = athena(&fake);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    let future = runtime.block_on(async {
+        let mut future = Box::pin(athena.query("SELECT 1").execute());
+        tokio::select! {
+            _ = &mut future => panic!("the query must not end"),
+            () = tokio::time::sleep(Duration::from_secs(1)) => {}
+        }
+        future
+    });
+    drop(runtime);
+    drop(future);
+    assert_eq!(athena.open_queries(), 0);
+}
+
+#[test]
+fn debug_hides_the_sql_and_the_values() {
+    let fake = FakeAthena::new();
+    let query = athena(&fake)
+        .query("SELECT secret FROM t WHERE a = ?")
+        .bind("alice@example.com");
+    let text = format!("{query:?}");
+    assert!(!text.contains("alice"), "{text}");
+    assert!(!text.contains("secret"), "{text}");
+    assert!(text.contains("params: 1"), "{text}");
 }

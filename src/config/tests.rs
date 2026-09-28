@@ -255,6 +255,7 @@ fn each_field_has_an_environment_variable() {
         catalog: Some(String::new()),
         database: Some(String::new()),
         output_location: Some(String::new()),
+        expected_bucket_owner: Some(String::new()),
         ..AthenaConfig::default()
     };
     let toml::Value::Table(table) = toml::Value::try_from(&full).unwrap() else {

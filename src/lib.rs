@@ -58,7 +58,7 @@ pub mod value;
 
 pub use api::{Column, StatementType, Statistics};
 pub use client::{Athena, Execution, Query, QueryOutput};
-pub use error::AthenaError;
+pub use error::{AthenaError, AthenaResultExt};
 pub use literal::Param;
 pub use plugin::{AthenaPlugin, PLUGIN_NAME};
 pub use sdk::SdkAthena;

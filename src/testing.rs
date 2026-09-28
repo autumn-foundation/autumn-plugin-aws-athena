@@ -18,6 +18,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use crate::api::{
     ApiError, AthenaApi, BoxFuture, Column, FailureInfo, Page, QueryState, StartRequest,
@@ -37,8 +38,12 @@ pub struct FakeQuery {
     columns: Vec<Column>,
     rows: Vec<Vec<Option<String>>>,
     start_error: Option<String>,
-    status_error: Option<String>,
+    status_error: Option<ApiError>,
     results_error: Option<String>,
+    failing_polls: usize,
+    start_delay: Duration,
+    status_delay: Duration,
+    results_delay: Duration,
 }
 
 impl FakeQuery {
@@ -54,6 +59,10 @@ impl FakeQuery {
             start_error: None,
             status_error: None,
             results_error: None,
+            failing_polls: 0,
+            start_delay: Duration::ZERO,
+            status_delay: Duration::ZERO,
+            results_delay: Duration::ZERO,
         }
     }
 
@@ -93,9 +102,39 @@ impl FakeQuery {
         query
     }
 
-    /// Makes each status call fail with `message`.
+    /// Makes each status call fail with `message`. A retry can clear the error.
     pub fn status_error(mut self, message: impl Into<String>) -> Self {
-        self.status_error = Some(message.into());
+        self.status_error = Some(ApiError::new("GetQueryExecution", message));
+        self
+    }
+
+    /// Makes each status call fail with `message`. A retry does not clear the error.
+    pub fn status_error_permanent(mut self, message: impl Into<String>) -> Self {
+        self.status_error = Some(ApiError::permanent("GetQueryExecution", message));
+        self
+    }
+
+    /// Makes the first `polls` status calls fail. A retry clears the error.
+    pub const fn failing_polls(mut self, polls: usize) -> Self {
+        self.failing_polls = polls;
+        self
+    }
+
+    /// Makes each start call wait for `delay`. Athena gets the query before the wait.
+    pub const fn start_delay(mut self, delay: Duration) -> Self {
+        self.start_delay = delay;
+        self
+    }
+
+    /// Makes each status call wait for `delay`.
+    pub const fn status_delay(mut self, delay: Duration) -> Self {
+        self.status_delay = delay;
+        self
+    }
+
+    /// Makes each results call wait for `delay`.
+    pub const fn results_delay(mut self, delay: Duration) -> Self {
+        self.results_delay = delay;
         self
     }
 
@@ -224,8 +263,8 @@ impl FakeAthena {
         let query = state.queries.get_mut(query_id).ok_or_else(|| {
             ApiError::new("GetQueryExecution", format!("unknown query {query_id}"))
         })?;
-        if let Some(message) = &query.script.status_error {
-            return Err(ApiError::new("GetQueryExecution", message.clone()));
+        if let Some(err) = &query.script.status_error {
+            return Err(err.clone());
         }
         let scripted = query
             .script

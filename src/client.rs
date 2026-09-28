@@ -117,6 +117,11 @@ impl Athena {
         self.inner.open().len()
     }
 
+    /// Stops each open query and refuses new queries.
+    pub async fn shutdown(&self) {
+        self.stop_all().await;
+    }
+
     /// Stops each open query in Athena. The waiting callers get [`AthenaError::Cancelled`].
     pub async fn stop_all(&self) {
         let ids: Vec<String> = self.inner.open().iter().cloned().collect();
@@ -299,6 +304,7 @@ impl Query {
             database: self.database.clone().or_else(|| config.database.clone()),
             output_location: config.output_location.clone(),
             reuse_max_age_minutes: (reuse > 0).then(|| i32::try_from(reuse).unwrap_or(i32::MAX)),
+            client_request_token: None,
         })
     }
 
@@ -322,7 +328,7 @@ impl Query {
             if Instant::now() >= deadline {
                 open.stop(Outcome::TimedOut).await;
                 return Err(AthenaError::Timeout {
-                    query_id: id,
+                    query_id: Some(id),
                     timeout: self.timeout_value(),
                 });
             }
@@ -373,7 +379,7 @@ impl Query {
         let page_size = self.config().page_size;
         let id = execution.query_id.clone();
         let timed_out = || AthenaError::Timeout {
-            query_id: id.clone(),
+            query_id: Some(id.clone()),
             timeout: self.timeout_value(),
         };
         let mut columns: Option<Arc<[Column]>> = None;
