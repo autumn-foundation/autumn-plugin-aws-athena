@@ -35,12 +35,18 @@ async fn start_sends_each_setting() {
                 && input.work_group() == Some("reports")
                 && context.database() == Some("sales")
                 && context.catalog() == Some("lake")
-                && input.result_configuration().and_then(|r| r.output_location())
+                && input
+                    .result_configuration()
+                    .and_then(|r| r.output_location())
                     == Some("s3://out/")
                 && reuse.enabled()
                 && reuse.max_age_in_minutes() == Some(30)
         })
-        .then_output(|| StartQueryExecutionOutput::builder().query_execution_id("q-1").build());
+        .then_output(|| {
+            StartQueryExecutionOutput::builder()
+                .query_execution_id("q-1")
+                .build()
+        });
     let request = StartRequest {
         sql: "SELECT ?".into(),
         parameters: vec!["'a'".into()],
@@ -63,8 +69,16 @@ async fn start_leaves_out_empty_settings() {
                 && input.result_configuration().is_none()
                 && input.result_reuse_configuration().is_none()
         })
-        .then_output(|| StartQueryExecutionOutput::builder().query_execution_id("q-2").build());
-    let request = StartRequest { sql: "SELECT 1".into(), workgroup: "primary".into(), ..StartRequest::default() };
+        .then_output(|| {
+            StartQueryExecutionOutput::builder()
+                .query_execution_id("q-2")
+                .build()
+        });
+    let request = StartRequest {
+        sql: "SELECT 1".into(),
+        workgroup: "primary".into(),
+        ..StartRequest::default()
+    };
     assert_eq!(athena(&[&rule]).start(request).await.unwrap(), "q-2");
 }
 
@@ -72,7 +86,10 @@ async fn start_leaves_out_empty_settings() {
 async fn start_without_an_id_is_an_error() {
     let rule = mock!(Client::start_query_execution)
         .then_output(|| StartQueryExecutionOutput::builder().build());
-    let err = athena(&[&rule]).start(StartRequest::default()).await.unwrap_err();
+    let err = athena(&[&rule])
+        .start(StartRequest::default())
+        .await
+        .unwrap_err();
     assert_eq!(err.operation, "StartQueryExecution");
 }
 
@@ -80,10 +97,15 @@ async fn start_without_an_id_is_an_error() {
 async fn start_errors_keep_the_service_message() {
     let rule = mock!(Client::start_query_execution).then_error(|| {
         StartQueryExecutionError::InvalidRequestException(
-            InvalidRequestException::builder().message("line 1: bad SQL").build(),
+            InvalidRequestException::builder()
+                .message("line 1: bad SQL")
+                .build(),
         )
     });
-    let err = athena(&[&rule]).start(StartRequest::default()).await.unwrap_err();
+    let err = athena(&[&rule])
+        .start(StartRequest::default())
+        .await
+        .unwrap_err();
     assert_eq!(err.operation, "StartQueryExecution");
     assert!(err.message.contains("line 1: bad SQL"), "{}", err.message);
 }
@@ -176,7 +198,9 @@ async fn status_without_a_state_is_an_error() {
 }
 
 fn datum(value: Option<&str>) -> Datum {
-    Datum::builder().set_var_char_value(value.map(str::to_owned)).build()
+    Datum::builder()
+        .set_var_char_value(value.map(str::to_owned))
+        .build()
 }
 
 #[tokio::test]
@@ -194,33 +218,60 @@ async fn results_map_columns_rows_and_nulls() {
                         .result_set_metadata(
                             ResultSetMetadata::builder()
                                 .column_info(
-                                    ColumnInfo::builder().name("id").r#type("bigint").build().unwrap(),
+                                    ColumnInfo::builder()
+                                        .name("id")
+                                        .r#type("bigint")
+                                        .build()
+                                        .unwrap(),
                                 )
                                 .column_info(
-                                    ColumnInfo::builder().name("note").r#type("varchar").build().unwrap(),
+                                    ColumnInfo::builder()
+                                        .name("note")
+                                        .r#type("varchar")
+                                        .build()
+                                        .unwrap(),
                                 )
                                 .build(),
                         )
-                        .rows(SdkRow::builder().data(datum(Some("1"))).data(datum(None)).build())
-                        .rows(SdkRow::builder().data(datum(Some("2"))).data(datum(Some(""))).build())
+                        .rows(
+                            SdkRow::builder()
+                                .data(datum(Some("1")))
+                                .data(datum(None))
+                                .build(),
+                        )
+                        .rows(
+                            SdkRow::builder()
+                                .data(datum(Some("2")))
+                                .data(datum(Some("")))
+                                .build(),
+                        )
                         .build(),
                 )
                 .next_token("t-2")
                 .build()
         });
-    let page = athena(&[&rule]).results("q-1", Some("t-1".into()), 500).await.unwrap();
-    assert_eq!(page.columns, vec![Column::new("id", "bigint"), Column::new("note", "varchar")]);
+    let page = athena(&[&rule])
+        .results("q-1", Some("t-1".into()), 500)
+        .await
+        .unwrap();
+    assert_eq!(
+        page.columns,
+        vec![Column::new("id", "bigint"), Column::new("note", "varchar")]
+    );
     assert_eq!(
         page.rows,
-        vec![vec![Some("1".to_owned()), None], vec![Some("2".to_owned()), Some(String::new())]]
+        vec![
+            vec![Some("1".to_owned()), None],
+            vec![Some("2".to_owned()), Some(String::new())]
+        ]
     );
     assert_eq!(page.next_token.as_deref(), Some("t-2"));
 }
 
 #[tokio::test]
 async fn results_without_a_result_set_are_empty() {
-    let rule = mock!(Client::get_query_results)
-        .then_output(|| GetQueryResultsOutput::builder().build());
+    let rule =
+        mock!(Client::get_query_results).then_output(|| GetQueryResultsOutput::builder().build());
     let page = athena(&[&rule]).results("q", None, 10).await.unwrap();
     assert_eq!(page, Page::default());
 }
@@ -242,10 +293,15 @@ async fn check_workgroup_reads_the_workgroup() {
     athena(&[&ok]).check_workgroup("primary").await.unwrap();
     let fail = mock!(Client::get_work_group).then_error(|| {
         GetWorkGroupError::InvalidRequestException(
-            InvalidRequestException::builder().message("no such workgroup").build(),
+            InvalidRequestException::builder()
+                .message("no such workgroup")
+                .build(),
         )
     });
-    let err = athena(&[&fail]).check_workgroup("missing").await.unwrap_err();
+    let err = athena(&[&fail])
+        .check_workgroup("missing")
+        .await
+        .unwrap_err();
     assert_eq!(err.operation, "GetWorkGroup");
     assert!(err.message.contains("no such workgroup"), "{}", err.message);
 }
@@ -259,5 +315,8 @@ async fn from_config_uses_the_region_and_the_endpoint() {
     };
     let athena = SdkAthena::from_config(&config).await;
     let sdk_config = athena.client().config();
-    assert_eq!(sdk_config.region().map(ToString::to_string).as_deref(), Some("eu-west-1"));
+    assert_eq!(
+        sdk_config.region().map(ToString::to_string).as_deref(),
+        Some("eu-west-1")
+    );
 }
