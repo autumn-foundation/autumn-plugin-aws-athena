@@ -1,3 +1,8 @@
+#![allow(
+    clippy::field_reassign_with_default,
+    reason = "each test changes one key of the defaults"
+)]
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -271,8 +276,15 @@ fn each_field_has_an_environment_variable() {
 
 #[test]
 fn plain_http_is_for_a_local_endpoint_only() {
-    assert!(invalid(|c| c.endpoint_url = Some("http://athena.example.com".into())).contains("endpoint_url"));
-    for local in ["http://localhost:4566", "http://127.0.0.1:4566", "http://[::1]:4566"] {
+    assert!(
+        invalid(|c| c.endpoint_url = Some("http://athena.example.com".into()))
+            .contains("endpoint_url")
+    );
+    for local in [
+        "http://localhost:4566",
+        "http://127.0.0.1:4566",
+        "http://[::1]:4566",
+    ] {
         let mut config = AthenaConfig::default();
         config.endpoint_url = Some(local.into());
         config.validate().unwrap();
@@ -284,8 +296,14 @@ fn plain_http_is_for_a_local_endpoint_only() {
 
 #[test]
 fn the_bucket_owner_is_an_account_id() {
-    assert!(invalid(|c| c.expected_bucket_owner = Some("12345".into())).contains("expected_bucket_owner"));
-    assert!(invalid(|c| c.expected_bucket_owner = Some("12345678901x".into())).contains("expected_bucket_owner"));
+    assert!(
+        invalid(|c| c.expected_bucket_owner = Some("12345".into()))
+            .contains("expected_bucket_owner")
+    );
+    assert!(
+        invalid(|c| c.expected_bucket_owner = Some("12345678901x".into()))
+            .contains("expected_bucket_owner")
+    );
     let mut config = AthenaConfig::default();
     config.expected_bucket_owner = Some("123456789012".into());
     config.validate().unwrap();
@@ -340,7 +358,11 @@ fn the_canonical_inline_profile_wins_over_its_alias() {
 #[test]
 fn a_release_build_uses_the_prod_profile() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "autumn.toml", "[profile.prod.athena]\ndatabase = \"p\"\n");
+    write(
+        dir.path(),
+        "autumn.toml",
+        "[profile.prod.athena]\ndatabase = \"p\"\n",
+    );
     let env = env_for(dir.path()).with("AUTUMN_IS_DEBUG", "0");
     let config = AthenaConfig::resolve_with_env("athena", &env).unwrap();
     assert_eq!(config.database.as_deref(), Some("p"));
@@ -349,8 +371,16 @@ fn a_release_build_uses_the_prod_profile() {
 #[test]
 fn only_the_first_profile_file_is_read() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "autumn-prod.toml", "[athena]\ndatabase = \"prod\"\n");
-    write(dir.path(), "autumn-production.toml", "[athena]\ndatabase = \"production\"\nmax_rows = 3\n");
+    write(
+        dir.path(),
+        "autumn-prod.toml",
+        "[athena]\ndatabase = \"prod\"\n",
+    );
+    write(
+        dir.path(),
+        "autumn-production.toml",
+        "[athena]\ndatabase = \"production\"\nmax_rows = 3\n",
+    );
     let env = env_for(dir.path()).with("AUTUMN_ENV", "prod");
     let config = AthenaConfig::resolve_with_env("athena", &env).unwrap();
     assert_eq!(config.database.as_deref(), Some("prod"));
@@ -363,7 +393,10 @@ fn environment_values_parse_by_type() {
     let base = env_for(dir.path());
     let config = AthenaConfig::resolve_with_env(
         "athena",
-        &base.clone().with("AUTUMN_ATHENA__HEALTH_CHECK", "0").with("AUTUMN_ATHENA__CANCEL_ON_DROP", "1"),
+        &base
+            .clone()
+            .with("AUTUMN_ATHENA__HEALTH_CHECK", "0")
+            .with("AUTUMN_ATHENA__CANCEL_ON_DROP", "1"),
     )
     .unwrap();
     assert!(!config.health_check);
@@ -373,7 +406,8 @@ fn environment_values_parse_by_type() {
         ("AUTUMN_ATHENA__POLL__MULTIPLIER", "fast"),
         ("AUTUMN_ATHENA__MAX_ROWS", "-1"),
     ] {
-        let err = AthenaConfig::resolve_with_env("athena", &base.clone().with(key, value)).unwrap_err();
+        let err =
+            AthenaConfig::resolve_with_env("athena", &base.clone().with(key, value)).unwrap_err();
         assert!(err.to_string().contains(key), "{key}: {err}");
     }
 }

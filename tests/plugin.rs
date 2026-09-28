@@ -126,10 +126,14 @@ async fn the_readiness_check_reads_the_workgroup() {
     let body = client.get("/actuator/health").send().await.text();
     assert!(body.contains("athena"), "{body}");
     assert!(!body.contains("DOWN"), "{body}");
+}
 
+#[tokio::test]
+async fn a_failed_readiness_check_hides_the_aws_error() {
+    let fake = FakeAthena::new();
     fake.fail_workgroup_check("AccessDenied: arn:aws:iam::123456789012:user/secret");
-    let response = client.get("/actuator/health").send().await;
-    let body = response.text();
+    let client = app(&fake, config());
+    let body = client.get("/actuator/health").send().await.text();
     assert!(body.contains("DOWN"), "{body}");
     // The health output must not show AWS error details.
     assert!(!body.contains("123456789012"), "{body}");
@@ -179,7 +183,10 @@ async fn the_start_of_shutdown_stops_open_queries() {
     client.state().begin_shutdown_for_test();
     let err = task.await.unwrap().unwrap_err();
     assert!(
-        matches!(err, AthenaError::ShuttingDown | AthenaError::Cancelled { .. }),
+        matches!(
+            err,
+            AthenaError::ShuttingDown | AthenaError::Cancelled { .. }
+        ),
         "{err:?}"
     );
     for _ in 0..100 {

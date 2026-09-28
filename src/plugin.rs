@@ -4,7 +4,8 @@
 //!
 //! - `build` reads the configuration. A bad configuration stops the boot in the startup hook.
 //! - The startup hook makes the SDK client and puts the handle in the app state.
-//! - The shutdown hook stops each open query.
+//! - When Autumn marks the shutdown, a watch task stops each open query and refuses new ones.
+//!   This happens before Autumn drains the requests. The shutdown hook does the same again.
 //! - The readiness check and the metrics source use the same handle.
 
 use std::borrow::Cow;
@@ -25,6 +26,9 @@ use crate::sdk::SdkAthena;
 /// The plugin name in Autumn diagnostics.
 pub const PLUGIN_NAME: &str = "autumn-plugin-aws-athena";
 
+/// The interval of the shutdown watch.
+const SHUTDOWN_WATCH: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// State that the plugin hooks share.
 #[derive(Default)]
 pub(crate) struct Shared {
@@ -35,7 +39,7 @@ pub(crate) struct Shared {
 impl Shared {
     pub(crate) async fn shutdown(&self) {
         if let Some(athena) = self.handle.get() {
-            athena.stop_all().await;
+            athena.shutdown().await;
         }
     }
 }
@@ -80,6 +84,8 @@ impl AthenaPlugin {
     }
 
     /// Reads `[section]` instead of `[athena]`.
+    ///
+    /// An app can have one Athena plugin only. Autumn ignores a second plugin with the same name.
     pub fn config_section(mut self, section: impl Into<String>) -> Self {
         self.source = Source::Section(section.into());
         self
@@ -111,7 +117,10 @@ impl AthenaPlugin {
         for change in changes {
             change(&mut config);
         }
-        config.validate()?;
+        match source {
+            Source::Section(section) => config.validate_section(section)?,
+            Source::Explicit(_) => config.validate()?,
+        }
         Ok(config)
     }
 }
@@ -135,9 +144,7 @@ impl Plugin for AthenaPlugin {
         let shared = Arc::new(Shared::default());
         app = app.metrics_source("athena", Arc::clone(&shared.metrics) as _);
         if resolved.as_ref().is_ok_and(|config| config.health_check) {
-            let check = WorkgroupCheck {
-                shared: Arc::clone(&shared),
-            };
+            let check = WorkgroupCheck::new(Arc::clone(&shared));
             app = app.health_indicator("athena", Arc::new(check));
         }
         let on_start = Arc::clone(&shared);
@@ -147,10 +154,9 @@ impl Plugin for AthenaPlugin {
             let resolved = Arc::clone(&resolved);
             let api = api.clone();
             async move {
-                let config = resolved
-                    .as_ref()
-                    .clone()
-                    .map_err(|err| AutumnError::internal_server_error(AthenaError::Config(err)))?;
+                let config = resolved.as_ref().clone().map_err(|err| {
+                    AutumnError::internal_server_error_msg(format!("{PLUGIN_NAME}: {err}"))
+                })?;
                 let api: Arc<dyn AthenaApi> = match api {
                     Some(api) => api,
                     None => Arc::new(SdkAthena::from_config(&config).await),
@@ -158,7 +164,8 @@ impl Plugin for AthenaPlugin {
                 let athena = Athena::with_parts(api, config, Arc::clone(&shared.metrics))
                     .map_err(AutumnError::internal_server_error)?;
                 state.insert_extension(athena.clone());
-                let _ = shared.handle.set(athena);
+                let _ = shared.handle.set(athena.clone());
+                tokio::spawn(watch_shutdown(state, athena));
                 tracing::info!("the Athena plugin is ready");
                 Ok(())
             }
@@ -167,6 +174,31 @@ impl Plugin for AthenaPlugin {
             let shared = Arc::clone(&shared);
             async move { shared.shutdown().await }
         })
+    }
+}
+
+/// Stops the open queries when Autumn marks the shutdown.
+///
+/// Autumn runs the shutdown hooks after the request drain. The drain can end the process first.
+async fn watch_shutdown(state: AppState, athena: Athena) {
+    while !state.probes().is_shutting_down() {
+        tokio::time::sleep(SHUTDOWN_WATCH).await;
+    }
+    tracing::info!("the app shuts down: stopping the open Athena queries");
+    athena.shutdown().await;
+}
+
+impl std::fmt::Debug for AthenaPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let source = match &self.source {
+            Source::Section(section) => section.as_str(),
+            Source::Explicit(_) => "(explicit)",
+        };
+        f.debug_struct("AthenaPlugin")
+            .field("config", &source)
+            .field("changes", &self.changes.len())
+            .field("custom_api", &self.api.is_some())
+            .finish()
     }
 }
 

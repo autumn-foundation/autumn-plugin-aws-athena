@@ -198,7 +198,7 @@ impl AthenaConfig {
         let config: Self = toml::Value::Table(merged)
             .try_into()
             .map_err(|err| ConfigError(format!("[{section}]: {err}")))?;
-        config.validate()?;
+        config.validate_section(section)?;
         Ok(config)
     }
 
@@ -208,7 +208,12 @@ impl AthenaConfig {
     ///
     /// Returns [`ConfigError`] that names the first key that is not valid.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        let fail = |key: &str, rule: &str| Err(ConfigError(format!("athena.{key} {rule}")));
+        self.validate_section(DEFAULT_SECTION)
+    }
+
+    /// Checks each value. The errors name keys in `section`.
+    pub(crate) fn validate_section(&self, section: &str) -> Result<(), ConfigError> {
+        let fail = |key: &str, rule: &str| Err(ConfigError(format!("{section}.{key} {rule}")));
         let wg = &self.workgroup;
         let wg_chars = wg
             .bytes()
@@ -225,9 +230,17 @@ impl AthenaConfig {
             return fail("region", "must be a region code, for example `eu-west-1`");
         }
         if let Some(url) = &self.endpoint_url
-            && !(url.starts_with("http://") || url.starts_with("https://"))
+            && !(url.starts_with("https://") || is_local_http(url))
         {
-            return fail("endpoint_url", "must start with `http://` or `https://`");
+            return fail(
+                "endpoint_url",
+                "must use `https://`, or `http://` on the local host",
+            );
+        }
+        if let Some(owner) = &self.expected_bucket_owner
+            && !(owner.len() == 12 && owner.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return fail("expected_bucket_owner", "must be a 12-digit AWS account ID");
         }
         if let Some(location) = &self.output_location
             && location
@@ -246,6 +259,9 @@ impl AthenaConfig {
         }
         if self.max_rows == 0 {
             return fail("max_rows", "must be 1 or more");
+        }
+        if self.max_result_bytes == 0 {
+            return fail("max_result_bytes", "must be 1 or more");
         }
         if !(1..=1000).contains(&self.page_size) {
             return fail("page_size", "must be from 1 to 1000");
@@ -278,6 +294,24 @@ impl AthenaConfig {
             self.poll.multiplier,
         )
     }
+}
+
+/// Returns `true` for `http://` on `localhost`, `127.0.0.1` or `[::1]`.
+fn is_local_http(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = if authority.starts_with('[') {
+        authority
+            .split(']')
+            .next()
+            .map(|h| format!("{h}]"))
+            .unwrap_or_default()
+    } else {
+        authority.split(':').next().unwrap_or_default().to_owned()
+    };
+    matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
 }
 
 /// Gives the selected profile text and the normalized profile, as Autumn does.
@@ -352,7 +386,17 @@ fn deep_merge(into: &mut toml::Table, layer: &toml::Table) {
 }
 
 fn apply_env(into: &mut toml::Table, section: &str, env: &dyn Env) -> Result<(), ConfigError> {
-    let prefix = format!("AUTUMN_{}__", section.to_ascii_uppercase());
+    let name: String = section
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let prefix = format!("AUTUMN_{name}__");
     for (path, kind) in LEAVES {
         let name = format!("{prefix}{}", path.replace('.', "__").to_ascii_uppercase());
         let Ok(raw) = env.var(&name) else {
@@ -361,7 +405,13 @@ fn apply_env(into: &mut toml::Table, section: &str, env: &dyn Env) -> Result<(),
         let bad = || ConfigError(format!("{name}: can not read {raw:?}"));
         let value = match kind {
             Kind::Text => toml::Value::String(raw.clone()),
-            Kind::Integer => toml::Value::Integer(raw.trim().parse().map_err(|_| bad())?),
+            Kind::Integer => {
+                let value: i64 = raw.trim().parse().map_err(|_| bad())?;
+                if value < 0 {
+                    return Err(bad());
+                }
+                toml::Value::Integer(value)
+            }
             Kind::Float => toml::Value::Float(raw.trim().parse().map_err(|_| bad())?),
             Kind::Bool => match raw.trim() {
                 "true" | "1" => toml::Value::Boolean(true),

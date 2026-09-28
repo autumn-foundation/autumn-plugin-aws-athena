@@ -10,8 +10,10 @@ use crate::testing::FakeAthena;
 
 fn check_for(fake: &FakeAthena, workgroup: &str) -> WorkgroupCheck {
     let shared = Arc::new(Shared::default());
-    let mut config = AthenaConfig::default();
-    config.workgroup = workgroup.to_owned();
+    let config = AthenaConfig {
+        workgroup: workgroup.to_owned(),
+        ..AthenaConfig::default()
+    };
     let athena = Athena::with_parts(Arc::new(fake.clone()), config, Arc::default()).unwrap();
     assert!(shared.handle.set(athena).is_ok());
     WorkgroupCheck::new(shared)

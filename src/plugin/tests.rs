@@ -32,10 +32,23 @@ async fn shutdown_stops_open_queries() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     shared.shutdown().await;
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
-    assert!(task.await.unwrap().is_err());
+    let err = task.await.unwrap().unwrap_err();
+    assert!(
+        matches!(
+            err,
+            crate::AthenaError::ShuttingDown | crate::AthenaError::Cancelled { .. }
+        ),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
 async fn shutdown_before_startup_does_nothing() {
     Shared::default().shutdown().await;
+}
+
+#[test]
+fn debug_shows_the_config_source() {
+    let text = format!("{:?}", AthenaPlugin::new().config_section("reports"));
+    assert!(text.contains("reports"), "{text}");
 }
