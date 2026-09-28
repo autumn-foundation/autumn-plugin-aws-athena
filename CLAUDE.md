@@ -33,7 +33,7 @@ The MSRV is 1.91. The lockfile holds AWS crates that support 1.91. Do not run `c
 | `config` | pure | `AthenaConfig`, layering and validation. |
 | `api` | seam | The `AthenaApi` trait and its data types. |
 | `sdk` | glue | `AthenaApi` on `aws-sdk-athena`. |
-| `client` | glue | `Athena` and `Query`: start, poll, stop, read. |
+| `client` | glue | `Athena` and `AthenaQuery`: start, poll, stop, read. |
 | `plugin` | glue | `AthenaPlugin` and the extractor. |
 | `health` | glue | The workgroup readiness check, with a 15-second cache. |
 | `metrics` | glue | Counters and the metrics source. |
