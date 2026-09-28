@@ -87,6 +87,7 @@ impl Athena {
         &self.inner.config
     }
 
+    #[cfg(test)]
     pub(crate) fn metrics(&self) -> &Arc<Metrics> {
         &self.inner.metrics
     }

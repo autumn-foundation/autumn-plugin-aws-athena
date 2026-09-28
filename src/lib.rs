@@ -5,6 +5,7 @@ mod backoff;
 mod client;
 pub mod config;
 mod error;
+mod health;
 pub mod literal;
 mod metrics;
 mod placeholder;

@@ -48,7 +48,13 @@ async fn a_handler_runs_a_query_with_the_extractor() {
     let client = app(&fake, config());
     let response = client.get("/orders").send().await;
     response.assert_ok();
-    assert_eq!(response.json::<Vec<Order>>(), vec![Order { id: 1, customer: "ada".into() }]);
+    assert_eq!(
+        response.json::<Vec<Order>>(),
+        vec![Order {
+            id: 1,
+            customer: "ada".into()
+        }]
+    );
     let started = fake.started();
     assert_eq!(started[0].parameters, vec!["'nobody'".to_owned()]);
     assert_eq!(started[0].database.as_deref(), Some("sales"));
@@ -140,7 +146,10 @@ async fn metrics_are_on_the_prometheus_endpoint() {
     let client = app(&fake, config());
     client.get("/orders").send().await.assert_ok();
     let body = client.get("/actuator/prometheus").send().await.text();
-    assert!(body.contains("athena_queries_total{outcome=\"succeeded\"} 1"), "{body}");
+    assert!(
+        body.contains("athena_queries_total{outcome=\"succeeded\"} 1"),
+        "{body}"
+    );
 }
 
 #[test]

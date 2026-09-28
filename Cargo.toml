@@ -24,6 +24,7 @@ aws-sdk-athena = { version = "1", default-features = false, features = ["rt-toki
 axum = { version = "0.8", default-features = false }
 http = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 toml = "1.1"
@@ -35,7 +36,6 @@ autumn-web = { version = ">=0.7, <0.8", default-features = false }
 aws-sdk-athena = { version = "1", default-features = false, features = ["rt-tokio", "test-util"] }
 aws-smithy-mocks = "0.2"
 proptest = "1"
-serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 
