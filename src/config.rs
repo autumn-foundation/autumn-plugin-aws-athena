@@ -143,7 +143,7 @@ const LEAVES: &[(&str, Kind)] = &[
 ];
 
 /// The longest reuse age that Athena accepts: seven days.
-const MAX_REUSE_MINUTES: u32 = 10_080;
+pub(crate) const MAX_REUSE_MINUTES: u32 = 10_080;
 
 impl AthenaConfig {
     /// Reads `[section]` from the app files and the environment.

@@ -8,14 +8,20 @@ fn failed(retryable: bool) -> AthenaError {
     AthenaError::Failed {
         query_id: "q".into(),
         reason: Some("boom".into()),
-        failure: Some(FailureInfo { retryable, ..FailureInfo::default() }),
+        failure: Some(FailureInfo {
+            retryable,
+            ..FailureInfo::default()
+        }),
     }
 }
 
 #[test]
 fn query_errors_carry_the_query_id() {
     assert_eq!(failed(false).query_id(), Some("q"));
-    let timeout = AthenaError::Timeout { query_id: "t".into(), timeout: Duration::from_secs(1) };
+    let timeout = AthenaError::Timeout {
+        query_id: "t".into(),
+        timeout: Duration::from_secs(1),
+    };
     assert_eq!(timeout.query_id(), Some("t"));
     assert_eq!(AthenaError::NotInstalled.query_id(), None);
 }
@@ -30,7 +36,10 @@ fn transient_errors_are_retryable() {
 
 #[test]
 fn errors_map_to_http_statuses() {
-    let timeout = AthenaError::Timeout { query_id: "t".into(), timeout: Duration::from_secs(1) };
+    let timeout = AthenaError::Timeout {
+        query_id: "t".into(),
+        timeout: Duration::from_secs(1),
+    };
     assert_eq!(timeout.status(), StatusCode::GATEWAY_TIMEOUT);
     assert_eq!(failed(true).status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(failed(false).status(), StatusCode::INTERNAL_SERVER_ERROR);

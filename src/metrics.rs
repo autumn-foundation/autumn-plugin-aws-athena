@@ -39,10 +39,13 @@ impl Metrics {
             Outcome::TimedOut => &self.timed_out,
         };
         counter.fetch_add(1, Ordering::Relaxed);
-        self.scanned_bytes.fetch_add(scanned_bytes, Ordering::Relaxed);
+        self.scanned_bytes
+            .fetch_add(scanned_bytes, Ordering::Relaxed);
         let _ = self
             .open
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)));
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
+            });
     }
 
     fn load(counter: &AtomicU64) -> f64 {
@@ -63,7 +66,10 @@ impl MetricsSource for Metrics {
                 name: "athena_queries_started_total".to_owned(),
                 help: "Athena queries that the plugin started.".to_owned(),
                 kind: MetricKind::Counter,
-                samples: vec![MetricSample { labels: Vec::new(), value: Self::load(&self.started) }],
+                samples: vec![MetricSample {
+                    labels: Vec::new(),
+                    value: Self::load(&self.started),
+                }],
             },
             MetricFamily {
                 name: "athena_queries_total".to_owned(),
@@ -80,13 +86,19 @@ impl MetricsSource for Metrics {
                 name: "athena_data_scanned_bytes_total".to_owned(),
                 help: "Bytes that Athena scanned for the queries.".to_owned(),
                 kind: MetricKind::Counter,
-                samples: vec![MetricSample { labels: Vec::new(), value: Self::load(&self.scanned_bytes) }],
+                samples: vec![MetricSample {
+                    labels: Vec::new(),
+                    value: Self::load(&self.scanned_bytes),
+                }],
             },
             MetricFamily {
                 name: "athena_queries_open".to_owned(),
                 help: "Athena queries that did not end yet.".to_owned(),
                 kind: MetricKind::Gauge,
-                samples: vec![MetricSample { labels: Vec::new(), value: Self::load(&self.open) }],
+                samples: vec![MetricSample {
+                    labels: Vec::new(),
+                    value: Self::load(&self.open),
+                }],
             },
         ]
     }

@@ -22,10 +22,16 @@ fn counts_each_outcome_and_the_open_queries() {
     metrics.ended(Outcome::Succeeded, 100);
     metrics.ended(Outcome::TimedOut, 5);
     assert!((value(&metrics, "athena_queries_started_total", None) - 2.0).abs() < f64::EPSILON);
-    assert!((value(&metrics, "athena_queries_total", Some("succeeded")) - 1.0).abs() < f64::EPSILON);
-    assert!((value(&metrics, "athena_queries_total", Some("timed_out")) - 1.0).abs() < f64::EPSILON);
+    assert!(
+        (value(&metrics, "athena_queries_total", Some("succeeded")) - 1.0).abs() < f64::EPSILON
+    );
+    assert!(
+        (value(&metrics, "athena_queries_total", Some("timed_out")) - 1.0).abs() < f64::EPSILON
+    );
     assert!((value(&metrics, "athena_queries_total", Some("failed"))).abs() < f64::EPSILON);
-    assert!((value(&metrics, "athena_data_scanned_bytes_total", None) - 105.0).abs() < f64::EPSILON);
+    assert!(
+        (value(&metrics, "athena_data_scanned_bytes_total", None) - 105.0).abs() < f64::EPSILON
+    );
     assert!((value(&metrics, "athena_queries_open", None)).abs() < f64::EPSILON);
 }
 

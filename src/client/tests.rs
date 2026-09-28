@@ -31,10 +31,17 @@ fn orders() -> FakeQuery {
 async fn fetch_returns_the_rows_without_the_header() {
     let fake = FakeAthena::new();
     fake.push(orders());
-    let output = athena(&fake).query("SELECT id, customer FROM orders").fetch().await.unwrap();
+    let output = athena(&fake)
+        .query("SELECT id, customer FROM orders")
+        .fetch()
+        .await
+        .unwrap();
     assert_eq!(output.columns.len(), 2);
     assert_eq!(output.rows.len(), 2);
-    assert_eq!(output.rows[0].values(), &[Value::Int(1), Value::Text("ada".into())]);
+    assert_eq!(
+        output.rows[0].values(),
+        &[Value::Int(1), Value::Text("ada".into())]
+    );
     assert_eq!(output.rows[1].values(), &[Value::Int(2), Value::Null]);
     assert_eq!(output.execution.query_id, "fake-1");
     assert_eq!(output.execution.statistics.data_scanned_bytes, 1024);
@@ -52,7 +59,16 @@ async fn fetch_as_decodes_each_row() {
     let rows: Vec<Order> = athena(&fake).query("SELECT 1").fetch_as().await.unwrap();
     assert_eq!(
         rows,
-        vec![Order { id: 1, customer: Some("ada".into()) }, Order { id: 2, customer: None }]
+        vec![
+            Order {
+                id: 1,
+                customer: Some("ada".into())
+            },
+            Order {
+                id: 2,
+                customer: None
+            }
+        ]
     );
 }
 
@@ -69,7 +85,10 @@ async fn the_start_request_has_the_config_and_the_parameters() {
         .unwrap();
     let request = &fake.started()[0];
     assert_eq!(request.sql, "SELECT * FROM t WHERE a = ? AND b = ?");
-    assert_eq!(request.parameters, vec!["'it''s'".to_owned(), "7".to_owned()]);
+    assert_eq!(
+        request.parameters,
+        vec!["'it''s'".to_owned(), "7".to_owned()]
+    );
     assert_eq!(request.workgroup, "primary");
     assert_eq!(request.database.as_deref(), Some("sales"));
     assert_eq!(request.catalog, None);
@@ -106,7 +125,12 @@ async fn config_reuse_applies_to_each_query() {
     config.reuse_max_age_minutes = 15;
     let athena = Athena::new(fake.clone(), config).unwrap();
     athena.query("SELECT 1").execute().await.unwrap();
-    athena.query("SELECT 1").reuse_results(0).execute().await.unwrap();
+    athena
+        .query("SELECT 1")
+        .reuse_results(0)
+        .execute()
+        .await
+        .unwrap();
     assert_eq!(fake.started()[0].reuse_max_age_minutes, Some(15));
     assert_eq!(fake.started()[1].reuse_max_age_minutes, None);
 }
@@ -115,7 +139,13 @@ async fn config_reuse_applies_to_each_query() {
 async fn a_parameter_count_mismatch_fails_before_the_start() {
     let fake = FakeAthena::new();
     let err = athena(&fake).query("SELECT ?").execute().await.unwrap_err();
-    assert_eq!(err, AthenaError::ParameterCount { placeholders: 1, parameters: 0 });
+    assert_eq!(
+        err,
+        AthenaError::ParameterCount {
+            placeholders: 1,
+            parameters: 0
+        }
+    );
     assert!(fake.started().is_empty());
 }
 
@@ -148,22 +178,41 @@ async fn a_utility_result_has_no_header_to_skip() {
     );
     let output = athena(&fake).query("SHOW TABLES").fetch().await.unwrap();
     assert_eq!(output.rows.len(), 1);
-    assert_eq!(output.rows[0].get("tab_name"), Some(&Value::Text("orders".into())));
+    assert_eq!(
+        output.rows[0].get("tab_name"),
+        Some(&Value::Text("orders".into()))
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn too_many_rows_fails() {
     let fake = FakeAthena::new();
     fake.push(orders());
-    let err = athena(&fake).query("SELECT 1").max_rows(1).fetch().await.unwrap_err();
-    assert_eq!(err, AthenaError::TooManyRows { query_id: "fake-1".into(), limit: 1 });
+    let err = athena(&fake)
+        .query("SELECT 1")
+        .max_rows(1)
+        .fetch()
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err,
+        AthenaError::TooManyRows {
+            query_id: "fake-1".into(),
+            limit: 1
+        }
+    );
 }
 
 #[tokio::test(start_paused = true)]
 async fn exactly_the_row_limit_passes() {
     let fake = FakeAthena::new();
     fake.push(orders());
-    let output = athena(&fake).query("SELECT 1").max_rows(2).fetch().await.unwrap();
+    let output = athena(&fake)
+        .query("SELECT 1")
+        .max_rows(2)
+        .fetch()
+        .await
+        .unwrap();
     assert_eq!(output.rows.len(), 2);
 }
 
@@ -173,7 +222,12 @@ async fn a_failed_query_gives_the_reason() {
     fake.push(FakeQuery::failed("SYNTAX_ERROR: line 1:8"));
     let athena = athena(&fake);
     let err = athena.query("SELEC 1").fetch().await.unwrap_err();
-    let AthenaError::Failed { query_id, reason, failure } = err else {
+    let AthenaError::Failed {
+        query_id,
+        reason,
+        failure,
+    } = err
+    else {
         panic!("expected a failure, got {err:?}");
     };
     assert_eq!(query_id, "fake-1");
@@ -188,7 +242,12 @@ async fn a_cancelled_query_is_an_error() {
     let fake = FakeAthena::new();
     fake.push(FakeQuery::cancelled());
     let err = athena(&fake).query("SELECT 1").execute().await.unwrap_err();
-    assert_eq!(err, AthenaError::Cancelled { query_id: "fake-1".into() });
+    assert_eq!(
+        err,
+        AthenaError::Cancelled {
+            query_id: "fake-1".into()
+        }
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -217,7 +276,10 @@ async fn the_timeout_stops_the_query() {
         .unwrap_err();
     assert_eq!(
         err,
-        AthenaError::Timeout { query_id: "fake-1".into(), timeout: Duration::from_secs(5) }
+        AthenaError::Timeout {
+            query_id: "fake-1".into(),
+            timeout: Duration::from_secs(5)
+        }
     );
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
     assert!(started.elapsed() <= Duration::from_secs(5) + Duration::from_millis(10));
@@ -229,7 +291,10 @@ async fn a_start_error_is_an_api_error() {
     let fake = FakeAthena::new();
     fake.push(FakeQuery::start_error("access denied"));
     let err = athena(&fake).query("SELECT 1").execute().await.unwrap_err();
-    assert!(matches!(err, AthenaError::Api(ref e) if e.operation == "StartQueryExecution"), "{err:?}");
+    assert!(
+        matches!(err, AthenaError::Api(ref e) if e.operation == "StartQueryExecution"),
+        "{err:?}"
+    );
     assert!(fake.stopped().is_empty());
 }
 
@@ -250,7 +315,10 @@ async fn a_results_error_is_an_api_error() {
     let fake = FakeAthena::new();
     fake.push(orders().results_error("throttled"));
     let err = athena(&fake).query("SELECT 1").fetch().await.unwrap_err();
-    assert!(matches!(err, AthenaError::Api(ref e) if e.operation == "GetQueryResults"), "{err:?}");
+    assert!(
+        matches!(err, AthenaError::Api(ref e) if e.operation == "GetQueryResults"),
+        "{err:?}"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -341,13 +409,24 @@ async fn metrics_count_the_outcomes() {
     athena.query("SELECT 1").execute().await.unwrap();
     athena.query("SELECT 1").execute().await.unwrap_err();
     let families = athena.metrics().collect();
-    let total = families.iter().find(|f| f.name == "athena_queries_total").unwrap();
+    let total = families
+        .iter()
+        .find(|f| f.name == "athena_queries_total")
+        .unwrap();
     let count = |outcome: &str| {
-        total.samples.iter().find(|s| s.labels[0].1 == outcome).unwrap().value
+        total
+            .samples
+            .iter()
+            .find(|s| s.labels[0].1 == outcome)
+            .unwrap()
+            .value
     };
     assert!((count("succeeded") - 1.0).abs() < f64::EPSILON);
     assert!((count("failed") - 1.0).abs() < f64::EPSILON);
-    let scanned = families.iter().find(|f| f.name == "athena_data_scanned_bytes_total").unwrap();
+    let scanned = families
+        .iter()
+        .find(|f| f.name == "athena_data_scanned_bytes_total")
+        .unwrap();
     assert!((scanned.samples[0].value - 1024.0).abs() < f64::EPSILON);
 }
 

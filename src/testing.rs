@@ -13,6 +13,9 @@
 //! );
 //! ```
 
+// Each call holds the lock for the full call. This keeps the fake simple.
+#![allow(clippy::significant_drop_tightening)]
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -128,13 +131,17 @@ impl FakeQuery {
 
     /// Sets the columns as `(label, type)` pairs.
     pub fn columns(mut self, columns: &[(&str, &str)]) -> Self {
-        self.columns = columns.iter().map(|(name, t)| Column::new(*name, *t)).collect();
+        self.columns = columns
+            .iter()
+            .map(|(name, t)| Column::new(*name, *t))
+            .collect();
         self
     }
 
     /// Adds a data row. `None` is SQL `NULL`.
     pub fn row(mut self, values: &[Option<&str>]) -> Self {
-        self.rows.push(values.iter().map(|v| v.map(str::to_owned)).collect());
+        self.rows
+            .push(values.iter().map(|v| v.map(str::to_owned)).collect());
         self
     }
 
@@ -142,7 +149,10 @@ impl FakeQuery {
     fn raw_rows(&self) -> Vec<Vec<Option<String>>> {
         let header = (self.statement_type == StatementType::Dml && !self.columns.is_empty())
             .then(|| self.columns.iter().map(|c| Some(c.name.clone())).collect());
-        header.into_iter().chain(self.rows.iter().cloned()).collect()
+        header
+            .into_iter()
+            .chain(self.rows.iter().cloned())
+            .collect()
     }
 }
 
@@ -211,10 +221,9 @@ impl FakeAthena {
 
     fn status_of(&self, query_id: &str) -> Result<Status, ApiError> {
         let mut state = self.lock();
-        let query = state
-            .queries
-            .get_mut(query_id)
-            .ok_or_else(|| ApiError::new("GetQueryExecution", format!("unknown query {query_id}")))?;
+        let query = state.queries.get_mut(query_id).ok_or_else(|| {
+            ApiError::new("GetQueryExecution", format!("unknown query {query_id}"))
+        })?;
         if let Some(message) = &query.script.status_error {
             return Err(ApiError::new("GetQueryExecution", message.clone()));
         }
@@ -252,10 +261,12 @@ impl FakeAthena {
             return Err(ApiError::new("GetQueryResults", message.clone()));
         }
         let rows = query.script.raw_rows();
-        let start = token.map_or(Ok(0), str::parse::<usize>).map_err(|_| {
-            ApiError::new("GetQueryResults", "the next token is not valid")
-        })?;
-        let end = start.saturating_add(usize::try_from(max).unwrap_or(0)).min(rows.len());
+        let start = token
+            .map_or(Ok(0), str::parse::<usize>)
+            .map_err(|_| ApiError::new("GetQueryResults", "the next token is not valid"))?;
+        let end = start
+            .saturating_add(usize::try_from(max).unwrap_or(0))
+            .min(rows.len());
         Ok(Page {
             columns: query.script.columns.clone(),
             rows: rows.get(start..end).map(<[_]>::to_vec).unwrap_or_default(),
@@ -278,7 +289,14 @@ impl AthenaApi for FakeAthena {
             }
             state.next_id += 1;
             let id = format!("fake-{}", state.next_id);
-            state.queries.insert(id.clone(), Running { script, polls: 0, stopped: false });
+            state.queries.insert(
+                id.clone(),
+                Running {
+                    script,
+                    polls: 0,
+                    stopped: false,
+                },
+            );
             Ok(id)
         })
     }
@@ -313,7 +331,9 @@ impl AthenaApi for FakeAthena {
             self.lock()
                 .workgroup_error
                 .clone()
-                .map_or(Ok(()), |message| Err(ApiError::new("GetWorkGroup", message)))
+                .map_or(Ok(()), |message| {
+                    Err(ApiError::new("GetWorkGroup", message))
+                })
         })
     }
 }
