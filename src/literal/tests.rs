@@ -6,7 +6,7 @@ use super::*;
 fn decode_string_literal(sql: &str) -> Option<String> {
     let inner = sql.strip_prefix('\'')?.strip_suffix('\'')?;
     let mut out = String::new();
-    let mut chars = inner.chars().peekable();
+    let mut chars = inner.chars();
     while let Some(c) = chars.next() {
         if c == '\'' {
             // Inside a literal, a quote must be doubled.
@@ -89,7 +89,14 @@ fn date_accepts_iso_dates_only() {
         Param::date("2024-02-29").unwrap().to_sql(),
         "DATE '2024-02-29'"
     );
-    for bad in ["2024-2-29", "2024-13-01", "2024-00-10", "2024-01-32", "20240101", "2024-01-01'"] {
+    for bad in [
+        "2024-2-29",
+        "2024-13-01",
+        "2024-00-10",
+        "2024-01-32",
+        "20240101",
+        "2024-01-01'",
+    ] {
         assert!(Param::date(bad).is_err(), "{bad:?} must fail");
     }
 }
@@ -101,7 +108,9 @@ fn timestamp_accepts_iso_timestamps_only() {
         "TIMESTAMP '2024-01-02 03:04:05'"
     );
     assert_eq!(
-        Param::timestamp("2024-01-02 03:04:05.123456").unwrap().to_sql(),
+        Param::timestamp("2024-01-02 03:04:05.123456")
+            .unwrap()
+            .to_sql(),
         "TIMESTAMP '2024-01-02 03:04:05.123456'"
     );
     for bad in [
