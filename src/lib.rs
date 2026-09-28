@@ -9,6 +9,7 @@ pub mod literal;
 mod metrics;
 mod placeholder;
 mod result;
+pub mod sdk;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 pub mod value;
