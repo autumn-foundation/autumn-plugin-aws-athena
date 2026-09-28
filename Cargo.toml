@@ -1,0 +1,51 @@
+[package]
+name = "autumn-plugin-aws-athena"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "Autumn plugin: run Amazon Athena SQL queries from Autumn handlers."
+license = "Apache-2.0"
+repository = "https://github.com/autumn-foundation/autumn-plugin-aws-athena"
+readme = "README.md"
+keywords = ["autumn", "athena", "aws", "sql", "plugin"]
+categories = ["web-programming", "database"]
+exclude = [".github/"]
+
+[features]
+default = []
+# Public `testing` module with `FakeAthena`.
+test-support = []
+
+[dependencies]
+# No default features: the host app selects the Autumn features.
+autumn-web = { version = ">=0.7, <0.8", default-features = false }
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "credentials-process", "sso"] }
+aws-sdk-athena = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+axum = { version = "0.8", default-features = false }
+http = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync", "time"] }
+toml = "1.1"
+tracing = "0.1"
+
+[dev-dependencies]
+aws-sdk-athena = { version = "1", default-features = false, features = ["rt-tokio", "test-util"] }
+aws-smithy-mocks = "0.2"
+proptest = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+module_name_repetitions = "allow"
