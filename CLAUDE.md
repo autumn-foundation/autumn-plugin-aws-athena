@@ -13,6 +13,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo check --locked --lib
 cargo test --locked --all-targets --all-features
+cargo +1.91.0 check --locked --all-targets --all-features
 cargo test --locked --doc --all-features
 RUSTDOCFLAGS=-D\ warnings cargo doc --locked --no-deps --all-features
 cargo llvm-cov --locked --all-features --ignore-filename-regex '/tests\.rs$' --fail-under-lines 90
@@ -34,7 +35,7 @@ The MSRV is 1.91. The lockfile holds AWS crates that support 1.91. Do not run `c
 | `sdk` | glue | `AthenaApi` on `aws-sdk-athena`. |
 | `client` | glue | `Athena` and `Query`: start, poll, stop, read. |
 | `plugin` | glue | `AthenaPlugin` and the extractor. |
-| `health` | glue | The workgroup readiness check. |
+| `health` | glue | The workgroup readiness check, with a 15-second cache. |
 | `metrics` | glue | Counters and the metrics source. |
 | `error` | data | `AthenaError` and the HTTP status map. |
 | `testing` | public | `FakeAthena` (feature `test-support`). |
@@ -49,15 +50,19 @@ Each pure module has a `# Contract` doc section. Change the contract first. Then
 - Never put a value into SQL text. Bind it with `Param`.
 - Never log SQL text or parameter values. Log the query ID.
 - Never show AWS error text in health output. It can have account details.
-- Each call to Athena has the query deadline.
+- Each call to Athena has a time limit. Query calls use the query deadline. Stop calls have their own limit.
+- A query with parameters never sends result reuse.
+- A permanent API error stops the poll at once. A retryable error gets three polls.
 - Metric names must not start with `autumn_`.
 - No test calls AWS. Use `FakeAthena` for the client and `aws-smithy-mocks` for `sdk`.
 
 ## Test notes
 
-- Client tests use `#[tokio::test(start_paused = true)]`. Poll sleeps then take no real time.
-- `TestApp` runs startup hooks but not shutdown hooks. `plugin::tests` tests the shutdown path.
-- The `plugin` integration test needs the `test-support` feature.
+- Client tests use `#[tokio::test(start_paused = true)]`. The clock is paused. Poll sleeps take no real time.
+- `FakeQuery` has delays and errors for each call. Use them to test the deadline paths.
+- `TestApp` runs startup hooks but not shutdown hooks. `plugin::tests` tests the shutdown hook.
+- `AppState::begin_shutdown_for_test` marks the shutdown. The shutdown watch then stops the open queries.
+- A dev-dependency on this crate turns on `test-support` for the integration tests.
 
 ## Documentation style
 

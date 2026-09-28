@@ -20,6 +20,8 @@
 //! output_location = "s3://my-bucket/athena/"
 //! timeout_ms = 300000
 //! max_rows = 10000
+//! max_result_bytes = 67108864
+//! max_concurrent_queries = 16
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -92,9 +94,9 @@ pub struct AthenaConfig {
     pub page_size: i32,
     /// The maximum age in minutes of a reused result. `0` disables reuse.
     pub reuse_max_age_minutes: u32,
-    /// Add a readiness check that reads the workgroup.
+    /// If `true`, the plugin adds a readiness check. The check reads the workgroup.
     pub health_check: bool,
-    /// Stop a query in Athena when the caller drops it.
+    /// If `true`, the plugin stops a dropped query in Athena.
     pub cancel_on_drop: bool,
     /// The status poll settings.
     pub poll: PollConfig,

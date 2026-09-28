@@ -1,6 +1,6 @@
 # Planning
 
-This document records the planning for `autumn-plugin-aws-athena`. It uses three methods: brainstorming, reverse brainstorming and six thinking hats. The last section gives the decisions and the TDD plan.
+This document records the plan for `autumn-plugin-aws-athena`. It uses three methods: brainstorming, reverse brainstorming and six thinking hats. The last section gives the decisions and the TDD plan.
 
 ## Goal
 
@@ -8,7 +8,7 @@ An Autumn app runs Amazon Athena SQL queries from a handler. The app does one in
 
 ## 1. Brainstorming
 
-We wrote all ideas first. We did not judge them during this step.
+Write all ideas first. Do not judge them in this step.
 
 1. A handler extractor `Athena` that gives a client.
 2. A fluent query builder: `athena.query(sql).bind(v).fetch_as::<T>()`.
@@ -49,7 +49,7 @@ Question: "How can we make this plugin fail?" Each answer gives a countermeasure
 | Leave a query running after a client disconnects. | A drop guard stops the query. |
 | Leave queries running at shutdown. | A shutdown hook stops all open queries. |
 | Read a very large result into memory. | A row limit. Too many rows gives an error, not a partial result. |
-| Treat the header row as data. | Skip row one on page one only for DML with matching labels. |
+| Treat the header row as data. | Skip row one on page one only for DML or unknown statements with matching labels. |
 | Treat `NULL` as an empty string. | A missing `VarCharValue` is `NULL`. An empty value is `""`. |
 | Log secrets or personal data. | Do not log SQL text or parameter values. Log the query ID. |
 | Send internal Athena messages to HTTP clients. | The HTTP error body is generic. The log has the details. |
@@ -78,7 +78,7 @@ Question: "How can we make this plugin fail?" Each answer gives a countermeasure
 
 ### Black hat (risks)
 
-- AWS SDK crates raise their minimum Rust version often. Pin and test with a lockfile.
+- AWS SDK crates raise their minimum Rust version often. Pin the versions in a lockfile. Test with the lockfile.
 - A placeholder counter can disagree with the Athena parser. Keep the lexer small and documented.
 - The Athena text format of `array`, `map` and `row` is not JSON. We keep these as text.
 - A drop guard needs a Tokio runtime. Without one, it only logs.
@@ -125,7 +125,6 @@ Ideas 1 to 17, 22 and 23.
 | `literal` | pure | Encodes `Param` values as Athena SQL literals. Quotes identifiers. |
 | `placeholder` | pure | Counts `?` placeholders outside strings and comments. |
 | `backoff` | pure | Gives the poll delay for each attempt. |
-| `state` | pure | Maps an Athena status to a poll decision. |
 | `value` | pure | Parses Athena text into `Value`. Deserializes rows with serde. |
 | `result` | pure | Skips the header row and builds `Row` values. |
 | `config` | pure | `AthenaConfig`, layering and validation. |
@@ -140,12 +139,12 @@ Ideas 1 to 17, 22 and 23.
 
 ## 6. TDD plan
 
-Each row is one cycle. Red: write a test that fails. Green: write the minimum code. Refactor: clean up with all tests green.
+Each item is one cycle. Red: write a test that fails. Green: write the minimum code. Refactor: clean up with all tests green.
 
 1. `literal`: each `Param` kind encodes. Property: any string gives one literal that decodes to the input.
 2. `placeholder`: counts in plain SQL, strings, identifiers and comments. Property: `?` in literals never counts.
 3. `backoff`: the first delay, growth and cap. Property: monotonic and in bounds.
-4. `state`: each state gives the correct decision. Unknown states continue.
+4. `api`: each Athena state maps to `QueryState`. Unknown states are not terminal.
 5. `value`: each column type parses. Invalid numbers give an error.
 6. `result`: header skip rules. Row width checks.
 7. `config`: defaults, TOML, profile layers, environment variables and validation.
@@ -153,3 +152,21 @@ Each row is one cycle. Red: write a test that fails. Green: write the minimum co
 9. `client`: success, failure, cancel, timeout, row limit and pages, all on the fake.
 10. `client`: the drop guard and the shutdown stop.
 11. `plugin`: the extractor, health, metrics and boot errors, in `TestApp`.
+
+## 7. Review
+
+Five review agents read the code. Each agent had one angle:
+
+| Angle | Main findings |
+|-------|---------------|
+| Correctness and concurrency | Autumn can end the process before the shutdown hooks. A huge timeout panics. Stop calls have no limit. A start timeout loses the query ID. |
+| Security | Unchecked typed variants skip validation. A negative number after `-` makes a comment. Debug output shows SQL. |
+| Athena semantics and cost | Result reuse can ignore parameter values. A throttled poll stops a paid query. Parameters over 1024 characters fail late. |
+| API and documentation | `Query` clashes with the Autumn extractor. `ApiError` is always retryable. Some docs do not match the code. |
+| Test quality | No test reaches the deadline paths. Generators miss quotes and comments. Some assertions are weak. |
+
+Each finding got a red test first and then a fix. These items stay out of scope for 0.1:
+
+- `UpdateCount` for DML results.
+- `EncryptionConfiguration` for a client-side result location. S3 default encryption covers most cases.
+- More than one plugin in one app.

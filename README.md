@@ -4,9 +4,9 @@ An [Autumn](https://github.com/autumn-foundation/autumn) plugin for [Amazon Athe
 
 - Bound parameters: each value becomes a safe SQL literal.
 - Typed rows: `serde` decodes rows into your structs.
-- Limits: a query timeout and a row limit. The plugin stops timed-out and dropped queries in Athena.
+- Limits: a timeout, a row limit, a byte limit and a concurrency limit for each query. The plugin stops timed-out and dropped queries in Athena.
 - Operations: a readiness check and Prometheus metrics.
-- Tests: `FakeAthena` runs your handlers with no AWS account.
+- Tests: `FakeAthena` replaces Athena in tests. The tests need no AWS account.
 
 ## Install
 
@@ -16,7 +16,7 @@ autumn-plugin-aws-athena = "0.1"
 ```
 
 ```rust,ignore
-use autumn_plugin_aws_athena::{Athena, AthenaError, AthenaPlugin};
+use autumn_plugin_aws_athena::{Athena, AthenaPlugin, AthenaResultExt as _};
 use autumn_web::prelude::*;
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -32,7 +32,7 @@ async fn orders(athena: Athena, Path(id): Path<String>) -> AutumnResult<Json<Vec
         .bind(id)
         .fetch_as::<Order>()
         .await
-        .map_err(AthenaError::into_autumn)?;
+        .or_http()?;
     Ok(Json(rows))
 }
 
@@ -46,6 +46,8 @@ async fn main() {
 }
 ```
 
+An app can have one Athena plugin only.
+
 ## Configuration
 
 The plugin reads `[athena]` in `autumn.toml`. Profile sections and profile files override it. `AUTUMN_ATHENA__<KEY>` variables override all files. For example, `AUTUMN_ATHENA__POLL__MAX_MS` sets `poll.max_ms`.
@@ -53,13 +55,16 @@ The plugin reads `[athena]` in `autumn.toml`. Profile sections and profile files
 ```toml
 [athena]
 region = "eu-west-1"                     # Default: the AWS default chain.
-endpoint_url = "http://localhost:4566"   # Optional. For a local emulator.
+endpoint_url = "http://localhost:4566"   # Optional. Plain HTTP is for the local host only.
 workgroup = "primary"
 catalog = "AwsDataCatalog"               # Optional.
 database = "sales"                       # Optional.
 output_location = "s3://my-bucket/athena/" # Optional if the workgroup sets it.
-timeout_ms = 300000                      # Includes the result read.
+expected_bucket_owner = "123456789012"   # Optional. The account that must own the bucket.
+timeout_ms = 300000                      # Includes the wait for a slot and the result read.
 max_rows = 10000                         # More rows give an error.
+max_result_bytes = 67108864              # More bytes of values give an error.
+max_concurrent_queries = 16              # For each process. 0 removes the limit.
 page_size = 1000                         # 1 to 1000.
 reuse_max_age_minutes = 0                # 0 disables result reuse. Maximum 10080.
 health_check = true                      # Readiness check with GetWorkGroup.
@@ -71,7 +76,9 @@ max_ms = 2000
 multiplier = 2.0
 ```
 
-Credentials come from the AWS default chain. Set code values with `AthenaPlugin::configure`, or give the full configuration with `AthenaPlugin::config`.
+Credentials come from the AWS default chain. Set code values with `AthenaPlugin::configure`. Give the full configuration with `AthenaPlugin::config`.
+
+Set `BytesScannedCutoffPerQuery` on the workgroup. This limits the cost of one query. The plugin cannot do this.
 
 ## Queries
 
@@ -83,6 +90,8 @@ Credentials come from the AWS default chain. Set code values with `AthenaPlugin:
 
 Each query can override the config: `database`, `catalog`, `workgroup`, `timeout`, `max_rows` and `reuse_results`.
 
+A query with parameters never uses result reuse. Athena can match a cached result for other values.
+
 ### Parameters
 
 Use `?` in the SQL and `bind` for each value. The plugin encodes each value as an Athena SQL literal:
@@ -90,8 +99,8 @@ Use `?` in the SQL and `bind` for each value. The plugin encodes each value as a
 | Rust value | SQL literal |
 |------------|-------------|
 | `&str`, `String` | `'it''s'` |
-| integers | `42` |
-| `f32`, `f64` | `1.5e0`, `nan()`, `infinity()` |
+| integers | `42`, `(-5)` |
+| `f32`, `f64` | `1.5e0`, `(-1e-3)`, `nan()`, `infinity()` |
 | `bool` | `true` |
 | `None` | `NULL` |
 | `Vec<u8>` | `X'0AFF'` |
@@ -99,7 +108,7 @@ Use `?` in the SQL and `bind` for each value. The plugin encodes each value as a
 | `Param::date("2024-01-31")?` | `DATE '2024-01-31'` |
 | `Param::timestamp("2024-01-31 12:00:00")?` | `TIMESTAMP '2024-01-31 12:00:00'` |
 
-The plugin counts the `?` placeholders before the call. A mismatch gives `AthenaError::ParameterCount`. For a dynamic table name, use `literal::quote_identifier`.
+The plugin counts the `?` placeholders before the call. A mismatch gives `AthenaError::ParameterCount`. An encoded value can have 1024 characters or fewer. For a dynamic table name in DML, use `literal::quote_identifier`.
 
 ### Values
 
@@ -114,25 +123,25 @@ The plugin counts the `?` placeholders before the call. A mismatch gives `Athena
 | `varbinary` | `Binary` |
 | all other types | `Text` |
 
-Athena gives `array`, `map` and `row` values in a text format that is not JSON. To get JSON, use `CAST(x AS JSON)` and parse the text.
+Athena gives `array`, `map` and `row` values in a text format that is not JSON. Use `CAST(x AS JSON)` in the SQL. Then parse the text as JSON. A `char` value has spaces at the end.
 
 ## Errors
 
-`AthenaError::into_autumn` gives an `AutumnError` with the correct status. The `?` operator also converts, but always gives status 500.
+`or_http()` (from `AthenaResultExt`) and `AthenaError::into_autumn` give an `AutumnError` with the status in this table. The `?` operator also converts, but it always gives status 500.
 
 | Error | Status |
 |-------|--------|
 | `Timeout` | 504 |
-| `Api`, `Cancelled`, retryable `Failed` | 503 |
+| retryable `Api`, `Cancelled`, `ShuttingDown`, retryable `Failed` | 503 |
 | all other errors | 500 |
 
-Autumn shows server error details only in development.
+Autumn shows server error details only in development. The message of `Failed` does not show the Athena reason, because the reason can repeat parameter values. The `reason` field has it.
 
 ## Operations
 
-- Readiness: the `athena` indicator calls `GetWorkGroup`. The output does not show AWS error details. The log has them.
+- Readiness: the `athena` indicator calls `GetWorkGroup`. It keeps each result for 15 seconds. A disabled workgroup is down. The output does not show AWS error details. The log has them.
 - Metrics: `athena_queries_started_total`, `athena_queries_total{outcome}`, `athena_data_scanned_bytes_total` and `athena_queries_open`.
-- Shutdown: the plugin stops each open query.
+- Shutdown: when Autumn marks the shutdown, the plugin stops each open query and refuses new queries.
 - Logs: the plugin logs query IDs. It does not log SQL text or parameter values.
 
 ## IAM permissions
@@ -141,10 +150,18 @@ The plugin calls `athena:StartQueryExecution`, `athena:GetQueryExecution`, `athe
 
 ## Tests
 
-Turn on the `test-support` feature. Give `FakeAthena` to the plugin:
+Turn on the `test-support` feature for your tests:
+
+```toml
+[dev-dependencies]
+autumn-plugin-aws-athena = { version = "0.1", features = ["test-support"] }
+```
+
+Give `FakeAthena` to the plugin:
 
 ```rust,ignore
 use autumn_plugin_aws_athena::testing::{FakeAthena, FakeQuery};
+use autumn_plugin_aws_athena::{AthenaConfig, AthenaPlugin};
 
 let fake = FakeAthena::new();
 fake.push(

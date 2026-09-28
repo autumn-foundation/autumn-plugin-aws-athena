@@ -27,3 +27,16 @@ fn only_final_states_are_terminal() {
     // Fail safe: keep polling. The deadline stops the loop.
     assert!(!QueryState::Unknown("PAUSED".to_owned()).is_terminal());
 }
+
+#[test]
+fn start_request_debug_hides_the_sql_and_the_values() {
+    let request = super::StartRequest {
+        sql: "SELECT secret FROM t WHERE a = ?".into(),
+        parameters: vec!["'alice@example.com'".into()],
+        ..super::StartRequest::default()
+    };
+    let text = format!("{request:?}");
+    assert!(!text.contains("secret"), "{text}");
+    assert!(!text.contains("alice"), "{text}");
+    assert!(text.contains("params: 1"), "{text}");
+}

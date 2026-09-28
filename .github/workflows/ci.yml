@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -59,12 +62,15 @@ jobs:
         with:
           toolchain: 1.91.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --lib --all-features
+      - run: cargo check --locked --all-targets --all-features
 
   # Users do not get this lockfile. This job tests the newest compatible releases.
   latest-deps:
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      # New lints on stable must not fail this job.
+      RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -133,7 +133,7 @@ pub struct FailureInfo {
     pub category: Option<i32>,
     /// The Athena error type code.
     pub error_type: Option<i32>,
-    /// Athena thinks that a retry can succeed.
+    /// Athena says that a retry can succeed.
     pub retryable: bool,
     /// The Athena error message.
     pub message: Option<String>,

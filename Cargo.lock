@@ -131,6 +131,7 @@ dependencies = [
 name = "autumn-plugin-aws-athena"
 version = "0.1.0"
 dependencies = [
+ "autumn-plugin-aws-athena",
  "autumn-web",
  "aws-config",
  "aws-sdk-athena",

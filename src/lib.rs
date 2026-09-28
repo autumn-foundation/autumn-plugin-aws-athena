@@ -3,7 +3,7 @@
 //! Add [`AthenaPlugin`] to the app. Then use the [`Athena`] extractor in a handler.
 //!
 //! ```rust,no_run
-//! use autumn_plugin_aws_athena::{Athena, AthenaError, AthenaPlugin};
+//! use autumn_plugin_aws_athena::{Athena, AthenaPlugin, AthenaResultExt as _};
 //! use autumn_web::prelude::*;
 //!
 //! #[derive(serde::Deserialize, serde::Serialize)]
@@ -19,7 +19,7 @@
 //!         .bind(id)
 //!         .fetch_as::<Order>()
 //!         .await
-//!         .map_err(AthenaError::into_autumn)?;
+//!         .or_http()?;
 //!     Ok(Json(rows))
 //! }
 //!
@@ -34,10 +34,11 @@
 //!
 //! The plugin reads `[athena]` in `autumn.toml`. See [`config`] for the keys.
 //!
-//! # Safety rules
+//! # Security rules
 //!
 //! - Bind each value with [`AthenaQuery::bind`]. Do not put values into the SQL text.
-//! - Each query has a timeout and a row limit. The plugin stops a timed-out query in Athena.
+//! - Each query has a timeout, a row limit and a byte limit. The plugin stops a timed-out query in Athena.
+//! - Set `BytesScannedCutoffPerQuery` on the workgroup. This limits the cost of one query.
 //! - Logs have query IDs. Logs do not have SQL text or parameter values.
 
 pub mod api;
@@ -56,8 +57,9 @@ pub mod sdk;
 pub mod testing;
 pub mod value;
 
-pub use api::{Column, StatementType, Statistics};
+pub use api::{ApiError, AthenaApi, Column, FailureInfo, QueryState, StatementType, Statistics};
 pub use client::{Athena, AthenaQuery, Execution, QueryOutput};
+pub use config::{AthenaConfig, PollConfig};
 pub use error::{AthenaError, AthenaResultExt};
 pub use literal::Param;
 pub use plugin::{AthenaPlugin, PLUGIN_NAME};

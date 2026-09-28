@@ -1,12 +1,12 @@
 //! A small app that reads orders from Athena.
 //!
-//! Set `AUTUMN_ATHENA__DATABASE` and `AUTUMN_ATHENA__OUTPUT_LOCATION`, then run:
+//! Set `AUTUMN_ATHENA__DATABASE` and `AUTUMN_ATHENA__OUTPUT_LOCATION`. Then run the command below.
 //!
 //! ```sh
 //! cargo run --example orders
 //! ```
 
-use autumn_plugin_aws_athena::{Athena, AthenaError, AthenaPlugin};
+use autumn_plugin_aws_athena::{Athena, AthenaPlugin, AthenaResultExt as _};
 use autumn_web::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ async fn orders(athena: Athena, Path(customer): Path<String>) -> AutumnResult<Js
         .bind(customer)
         .fetch_as::<Order>()
         .await
-        .map_err(AthenaError::into_autumn)?;
+        .or_http()?;
     Ok(Json(rows))
 }
 

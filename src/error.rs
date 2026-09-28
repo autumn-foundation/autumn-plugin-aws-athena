@@ -115,7 +115,7 @@ impl AthenaError {
         }
     }
 
-    /// Returns `true` if a retry of the same query can succeed.
+    /// Returns `true` if a retry of the same query can succeed. A permanent API error is not retryable.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
