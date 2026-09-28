@@ -36,7 +36,7 @@
 //!
 //! # Safety rules
 //!
-//! - Bind each value with [`Query::bind`]. Do not put values into the SQL text.
+//! - Bind each value with [`AthenaQuery::bind`]. Do not put values into the SQL text.
 //! - Each query has a timeout and a row limit. The plugin stops a timed-out query in Athena.
 //! - Logs have query IDs. Logs do not have SQL text or parameter values.
 
@@ -57,7 +57,7 @@ pub mod testing;
 pub mod value;
 
 pub use api::{Column, StatementType, Statistics};
-pub use client::{Athena, Execution, Query, QueryOutput};
+pub use client::{Athena, AthenaQuery, Execution, QueryOutput};
 pub use error::{AthenaError, AthenaResultExt};
 pub use literal::Param;
 pub use plugin::{AthenaPlugin, PLUGIN_NAME};

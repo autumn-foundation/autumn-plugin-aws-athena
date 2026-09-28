@@ -199,6 +199,7 @@ impl FakeQuery {
 struct Running {
     script: FakeQuery,
     polls: usize,
+    failed_polls: usize,
     stopped: bool,
 }
 
@@ -209,7 +210,9 @@ struct State {
     started: Vec<StartRequest>,
     stopped: Vec<String>,
     page_requests: Vec<i32>,
+    checked_workgroups: Vec<String>,
     workgroup_error: Option<String>,
+    tokens: HashMap<String, String>,
     next_id: u64,
 }
 
@@ -258,13 +261,66 @@ impl FakeAthena {
         self.lock().page_requests.clone()
     }
 
+    /// The workgroup of each workgroup check, in order.
+    #[must_use]
+    pub fn checked_workgroups(&self) -> Vec<String> {
+        self.lock().checked_workgroups.clone()
+    }
+
+    /// The scripted delay of a call for `query_id`.
+    fn delay(&self, query_id: &str, pick: fn(&FakeQuery) -> Duration) -> Duration {
+        self.lock()
+            .queries
+            .get(query_id)
+            .map_or(Duration::ZERO, |query| pick(&query.script))
+    }
+
+    /// Records a start. Gives the query ID and the delay before the response.
+    fn begin(&self, request: StartRequest) -> Result<(String, Duration), ApiError> {
+        let mut state = self.lock();
+        let token = request.client_request_token.clone();
+        state.started.push(request);
+        // Athena gives the same query for a repeated token.
+        if let Some(id) = token.as_ref().and_then(|t| state.tokens.get(t)).cloned() {
+            let delay = state
+                .queries
+                .get(&id)
+                .map_or(Duration::ZERO, |q| q.script.start_delay);
+            return Ok((id, delay));
+        }
+        let script = state.scripts.pop_front().ok_or_else(|| {
+            ApiError::permanent("StartQueryExecution", "FakeAthena has no script")
+        })?;
+        if let Some(message) = &script.start_error {
+            return Err(ApiError::permanent("StartQueryExecution", message.clone()));
+        }
+        state.next_id += 1;
+        let id = format!("fake-{}", state.next_id);
+        let delay = script.start_delay;
+        let running = Running {
+            script,
+            polls: 0,
+            failed_polls: 0,
+            stopped: false,
+        };
+        state.queries.insert(id.clone(), running);
+        if let Some(token) = token {
+            state.tokens.insert(token, id.clone());
+        }
+        Ok((id, delay))
+    }
+
     fn status_of(&self, query_id: &str) -> Result<Status, ApiError> {
         let mut state = self.lock();
         let query = state.queries.get_mut(query_id).ok_or_else(|| {
-            ApiError::new("GetQueryExecution", format!("unknown query {query_id}"))
+            ApiError::permanent("GetQueryExecution", format!("unknown query {query_id}"))
         })?;
         if let Some(err) = &query.script.status_error {
             return Err(err.clone());
+        }
+        if query.failed_polls < query.script.failing_polls {
+            query.failed_polls += 1;
+            return Err(ApiError::new("GetQueryExecution", "Rate exceeded"));
         }
         let scripted = query
             .script
@@ -292,6 +348,12 @@ impl FakeAthena {
     fn page_of(&self, query_id: &str, token: Option<&str>, max: i32) -> Result<Page, ApiError> {
         let mut state = self.lock();
         state.page_requests.push(max);
+        if !(1..=1000).contains(&max) {
+            return Err(ApiError::permanent(
+                "GetQueryResults",
+                "MaxResults must be 1 to 1000",
+            ));
+        }
         let query = state
             .queries
             .get(query_id)
@@ -317,31 +379,17 @@ impl FakeAthena {
 impl AthenaApi for FakeAthena {
     fn start(&self, request: StartRequest) -> BoxFuture<'_, Result<String, ApiError>> {
         Box::pin(async move {
-            let mut state = self.lock();
-            state.started.push(request);
-            let script = state
-                .scripts
-                .pop_front()
-                .ok_or_else(|| ApiError::new("StartQueryExecution", "FakeAthena has no script"))?;
-            if let Some(message) = &script.start_error {
-                return Err(ApiError::new("StartQueryExecution", message.clone()));
-            }
-            state.next_id += 1;
-            let id = format!("fake-{}", state.next_id);
-            state.queries.insert(
-                id.clone(),
-                Running {
-                    script,
-                    polls: 0,
-                    stopped: false,
-                },
-            );
+            let (id, delay) = self.begin(request)?;
+            tokio::time::sleep(delay).await;
             Ok(id)
         })
     }
 
     fn status<'a>(&'a self, query_id: &'a str) -> BoxFuture<'a, Result<Status, ApiError>> {
-        Box::pin(async move { self.status_of(query_id) })
+        Box::pin(async move {
+            tokio::time::sleep(self.delay(query_id, |q| q.status_delay)).await;
+            self.status_of(query_id)
+        })
     }
 
     fn results<'a>(
@@ -350,29 +398,31 @@ impl AthenaApi for FakeAthena {
         next_token: Option<String>,
         max_results: i32,
     ) -> BoxFuture<'a, Result<Page, ApiError>> {
-        Box::pin(async move { self.page_of(query_id, next_token.as_deref(), max_results) })
+        Box::pin(async move {
+            tokio::time::sleep(self.delay(query_id, |q| q.results_delay)).await;
+            self.page_of(query_id, next_token.as_deref(), max_results)
+        })
     }
 
     fn stop<'a>(&'a self, query_id: &'a str) -> BoxFuture<'a, Result<(), ApiError>> {
         Box::pin(async move {
             let mut state = self.lock();
+            let query = state.queries.get_mut(query_id).ok_or_else(|| {
+                ApiError::permanent("StopQueryExecution", format!("unknown query {query_id}"))
+            })?;
+            query.stopped = true;
             state.stopped.push(query_id.to_owned());
-            if let Some(query) = state.queries.get_mut(query_id) {
-                query.stopped = true;
-            }
             Ok(())
         })
     }
 
     fn check_workgroup<'a>(&'a self, workgroup: &'a str) -> BoxFuture<'a, Result<(), ApiError>> {
         Box::pin(async move {
-            let _ = workgroup;
-            self.lock()
-                .workgroup_error
-                .clone()
-                .map_or(Ok(()), |message| {
-                    Err(ApiError::new("GetWorkGroup", message))
-                })
+            let mut state = self.lock();
+            state.checked_workgroups.push(workgroup.to_owned());
+            state.workgroup_error.clone().map_or(Ok(()), |message| {
+                Err(ApiError::new("GetWorkGroup", message))
+            })
         })
     }
 }

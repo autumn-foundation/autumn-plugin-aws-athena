@@ -52,7 +52,7 @@ pub struct ParamError {
 }
 
 impl ParamError {
-    const fn new(kind: &'static str, reason: &'static str) -> Self {
+    pub(crate) const fn new(kind: &'static str, reason: &'static str) -> Self {
         Self { kind, reason }
     }
 }

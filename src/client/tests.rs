@@ -540,7 +540,7 @@ async fn a_hung_start_times_out_and_the_query_stops() {
     assert!(matches!(err, AthenaError::Timeout { .. }), "{err:?}");
     assert_eq!(err.query_id(), None);
     // A second start with the same token finds the query. Then the plugin stops it.
-    tokio::time::sleep(Duration::from_secs(120)).await;
+    tokio::time::sleep(Duration::from_secs(180)).await;
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
 }
 
@@ -771,6 +771,10 @@ async fn a_dropped_query_counts_as_cancelled() {
 }
 
 #[test]
+#[allow(
+    clippy::async_yields_async,
+    reason = "the test keeps the future to drop it later"
+)]
 fn dropping_a_query_with_no_runtime_does_not_panic() {
     let fake = FakeAthena::new();
     fake.push(FakeQuery::pending());

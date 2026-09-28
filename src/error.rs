@@ -22,6 +22,7 @@ pub enum AthenaError {
     Param(#[from] ParamError),
     /// The number of parameters is not the number of `?` placeholders.
     #[error("the SQL has {placeholders} placeholders, but the query has {parameters} parameters")]
+    #[non_exhaustive]
     ParameterCount {
         /// The `?` placeholders in the SQL.
         placeholders: usize,
@@ -32,7 +33,10 @@ pub enum AthenaError {
     #[error(transparent)]
     Api(#[from] ApiError),
     /// Athena ran the query, and the query failed.
-    #[error("query {query_id} failed: {}", reason.as_deref().unwrap_or("no reason given"))]
+    ///
+    /// The message does not show `reason`, because it can repeat parameter values.
+    #[error("query {query_id} failed{}", category_text(failure.as_ref()))]
+    #[non_exhaustive]
     Failed {
         /// The query ID.
         query_id: String,
@@ -43,12 +47,14 @@ pub enum AthenaError {
     },
     /// Someone stopped the query.
     #[error("query {query_id} was cancelled")]
+    #[non_exhaustive]
     Cancelled {
         /// The query ID.
         query_id: String,
     },
     /// The query did not complete in time. The plugin stopped it.
     #[error("the query did not complete in {timeout:?}")]
+    #[non_exhaustive]
     Timeout {
         /// The query ID. It is `None` if the start did not complete in time.
         query_id: Option<String>,
@@ -57,6 +63,7 @@ pub enum AthenaError {
     },
     /// The result has more rows than the limit.
     #[error("query {query_id} returned more than {limit} rows")]
+    #[non_exhaustive]
     TooManyRows {
         /// The query ID.
         query_id: String,
@@ -65,6 +72,7 @@ pub enum AthenaError {
     },
     /// The values of the result have more bytes than the limit.
     #[error("query {query_id} returned more than {limit_bytes} bytes")]
+    #[non_exhaustive]
     ResultTooLarge {
         /// The query ID.
         query_id: String,
@@ -80,6 +88,17 @@ pub enum AthenaError {
     /// The app does not have the plugin.
     #[error("the Athena plugin is not installed: add `AthenaPlugin` to the app")]
     NotInstalled,
+}
+
+/// The Athena error codes of a failure, for the message.
+fn category_text(failure: Option<&FailureInfo>) -> String {
+    match failure.map(|f| (f.category, f.error_type)) {
+        Some((Some(category), Some(error_type))) => {
+            format!(" (Athena error category {category}, type {error_type})")
+        }
+        Some((Some(category), None)) => format!(" (Athena error category {category})"),
+        _ => String::new(),
+    }
 }
 
 impl AthenaError {
@@ -100,7 +119,8 @@ impl AthenaError {
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
-            Self::Api(_) | Self::Timeout { .. } => true,
+            Self::Api(err) => err.retryable,
+            Self::Timeout { .. } => true,
             Self::Failed { failure, .. } => failure.as_ref().is_some_and(|f| f.retryable),
             _ => false,
         }
@@ -111,7 +131,8 @@ impl AthenaError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::Timeout { .. } => StatusCode::GATEWAY_TIMEOUT,
-            Self::Api(_) | Self::Cancelled { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Api(err) if err.retryable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Cancelled { .. } | Self::ShuttingDown => StatusCode::SERVICE_UNAVAILABLE,
             Self::Failed { .. } if self.is_retryable() => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }

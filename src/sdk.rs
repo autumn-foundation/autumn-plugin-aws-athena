@@ -5,14 +5,19 @@
 //! - Each method makes one SDK call. The SDK retries throttles and transient errors.
 //! - The SDK sets `ClientRequestToken`, so a retried start does not start a second query.
 //! - An empty optional setting is not sent.
+//! - The plugin sends its own `ClientRequestToken`, so it can find a query whose start timed out.
 //! - An SDK error gives an [`ApiError`] with the full error context.
+//! - A denied or bad request is permanent. A throttle, a server error or a network error is retryable.
+//! - A column uses its label, or its name if it has no label.
+//! - A disabled workgroup fails the workgroup check.
 
 use aws_sdk_athena::Client;
 use aws_sdk_athena::config::{BehaviorVersion, Region};
-use aws_sdk_athena::error::DisplayErrorContext;
+use aws_sdk_athena::error::{DisplayErrorContext, ProvideErrorMetadata, SdkError};
 use aws_sdk_athena::types::{
     QueryExecution, QueryExecutionContext, QueryExecutionState, ResultConfiguration,
     ResultReuseByAgeConfiguration, ResultReuseConfiguration, StatementType as SdkStatementType,
+    WorkGroupState,
 };
 
 use crate::api::{
@@ -55,9 +60,39 @@ impl SdkAthena {
     }
 }
 
+/// Service error codes that a retry does not clear.
+const PERMANENT_CODES: &[&str] = &[
+    "InvalidRequestException",
+    "AccessDeniedException",
+    "ResourceNotFoundException",
+    "MetadataException",
+    "UnrecognizedClientException",
+];
+
 /// Makes an [`ApiError`] from an SDK error.
-fn sdk_error(operation: &'static str, err: impl std::error::Error) -> ApiError {
-    ApiError::new(operation, DisplayErrorContext(err).to_string())
+fn sdk_error<E, R>(operation: &'static str, err: SdkError<E, R>) -> ApiError
+where
+    E: ProvideErrorMetadata + std::error::Error + std::fmt::Debug + 'static,
+    R: std::fmt::Debug,
+{
+    let permanent = match &err {
+        SdkError::ServiceError(context) => {
+            // The error metadata has the code. The variant name is the fallback.
+            let variant = format!("{:?}", context.err());
+            let code = context.err().code().unwrap_or(&variant);
+            PERMANENT_CODES
+                .iter()
+                .any(|permanent| code.starts_with(permanent))
+        }
+        SdkError::ConstructionFailure(_) => true,
+        _ => false,
+    };
+    let message = DisplayErrorContext(err).to_string();
+    if permanent {
+        ApiError::permanent(operation, message)
+    } else {
+        ApiError::new(operation, message)
+    }
 }
 
 fn non_negative(value: Option<i64>) -> u64 {
@@ -121,7 +156,8 @@ impl AthenaApi for SdkAthena {
                 .client
                 .start_query_execution()
                 .query_string(request.sql)
-                .work_group(request.workgroup);
+                .work_group(request.workgroup)
+                .set_client_request_token(request.client_request_token);
             if !request.parameters.is_empty() {
                 call = call.set_execution_parameters(Some(request.parameters));
             }
@@ -133,10 +169,11 @@ impl AthenaApi for SdkAthena {
                         .build(),
                 );
             }
-            if let Some(location) = request.output_location {
+            if request.output_location.is_some() || request.expected_bucket_owner.is_some() {
                 call = call.result_configuration(
                     ResultConfiguration::builder()
-                        .output_location(location)
+                        .set_output_location(request.output_location)
+                        .set_expected_bucket_owner(request.expected_bucket_owner)
                         .build(),
                 );
             }
@@ -204,7 +241,7 @@ impl AthenaApi for SdkAthena {
                 .map(aws_sdk_athena::types::ResultSetMetadata::column_info)
                 .unwrap_or_default()
                 .iter()
-                .map(|c| Column::new(c.name(), c.r#type()))
+                .map(|c| Column::new(c.label().unwrap_or_else(|| c.name()), c.r#type()))
                 .collect();
             let rows = set
                 .rows()
@@ -238,13 +275,19 @@ impl AthenaApi for SdkAthena {
 
     fn check_workgroup<'a>(&'a self, workgroup: &'a str) -> BoxFuture<'a, Result<(), ApiError>> {
         Box::pin(async move {
-            self.client
+            const OP: &str = "GetWorkGroup";
+            let output = self
+                .client
                 .get_work_group()
                 .work_group(workgroup)
                 .send()
                 .await
-                .map(|_| ())
-                .map_err(|err| sdk_error("GetWorkGroup", err))
+                .map_err(|err| sdk_error(OP, err))?;
+            let state = output.work_group().and_then(|w| w.state());
+            if state == Some(&WorkGroupState::Disabled) {
+                return Err(ApiError::permanent(OP, "the workgroup is disabled"));
+            }
+            Ok(())
         })
     }
 }

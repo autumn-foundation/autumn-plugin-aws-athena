@@ -48,6 +48,8 @@ pub struct StartRequest {
     pub database: Option<String>,
     /// The S3 location for the results.
     pub output_location: Option<String>,
+    /// The AWS account ID that must own the result bucket.
+    pub expected_bucket_owner: Option<String>,
     /// The maximum age in minutes of a reused result. `None` disables reuse.
     pub reuse_max_age_minutes: Option<i32>,
     /// The idempotency token. A second start with the same token gives the same query.

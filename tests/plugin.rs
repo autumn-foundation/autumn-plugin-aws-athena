@@ -95,6 +95,13 @@ async fn a_timeout_gives_a_gateway_timeout() {
     config.poll.max_ms = 10;
     let client = app(&fake, config);
     client.get("/orders").send().await.assert_status(504);
+    // The plugin stops the query in a background task.
+    for _ in 0..100 {
+        if !fake.stopped().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
 }
 

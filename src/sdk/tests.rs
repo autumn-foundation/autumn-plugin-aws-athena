@@ -6,11 +6,11 @@ use aws_sdk_athena::operation::start_query_execution::{
     StartQueryExecutionError, StartQueryExecutionOutput,
 };
 use aws_sdk_athena::operation::stop_query_execution::StopQueryExecutionOutput;
-use aws_sdk_athena::types::error::InvalidRequestException;
+use aws_sdk_athena::types::error::{InvalidRequestException, TooManyRequestsException};
 use aws_sdk_athena::types::{
     AthenaError as SdkFailure, ColumnInfo, Datum, QueryExecution, QueryExecutionState,
     QueryExecutionStatistics, QueryExecutionStatus, ResultReuseInformation, ResultSet,
-    ResultSetMetadata, Row as SdkRow, StatementType as SdkStatementType,
+    ResultSetMetadata, Row as SdkRow, StatementType as SdkStatementType, WorkGroup, WorkGroupState,
 };
 use aws_smithy_mocks::{Rule, RuleMode, mock, mock_client};
 
@@ -39,6 +39,10 @@ async fn start_sends_each_setting() {
                     .result_configuration()
                     .and_then(|r| r.output_location())
                     == Some("s3://out/")
+                && input
+                    .result_configuration()
+                    .and_then(|r| r.expected_bucket_owner())
+                    == Some("123456789012")
                 && reuse.enabled()
                 && reuse.max_age_in_minutes() == Some(30)
                 && input.client_request_token() == Some("0123456789abcdef0123456789abcdef")
@@ -55,6 +59,7 @@ async fn start_sends_each_setting() {
         catalog: Some("lake".into()),
         database: Some("sales".into()),
         output_location: Some("s3://out/".into()),
+        expected_bucket_owner: Some("123456789012".into()),
         reuse_max_age_minutes: Some(30),
         client_request_token: Some("0123456789abcdef0123456789abcdef".into()),
     };
@@ -192,11 +197,177 @@ async fn status_maps_each_state_and_statement_type() {
 }
 
 #[tokio::test]
-async fn status_without_a_state_is_an_error() {
+async fn status_without_an_execution_is_an_error() {
     let rule = mock!(Client::get_query_execution)
         .then_output(|| GetQueryExecutionOutput::builder().build());
     let err = athena(&[&rule]).status("q").await.unwrap_err();
     assert_eq!(err.operation, "GetQueryExecution");
+}
+
+#[tokio::test]
+async fn status_without_a_state_is_an_error() {
+    let rule = mock!(Client::get_query_execution).then_output(|| {
+        GetQueryExecutionOutput::builder()
+            .query_execution(QueryExecution::builder().build())
+            .build()
+    });
+    let err = athena(&[&rule]).status("q").await.unwrap_err();
+    assert!(err.message.contains("no query state"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn status_maps_unknown_values_and_missing_statistics() {
+    let rule = mock!(Client::get_query_execution).then_output(|| {
+        GetQueryExecutionOutput::builder()
+            .query_execution(
+                QueryExecution::builder()
+                    .status(
+                        QueryExecutionStatus::builder()
+                            .state(QueryExecutionState::from("PAUSED"))
+                            .build(),
+                    )
+                    .statistics(
+                        QueryExecutionStatistics::builder()
+                            .data_scanned_in_bytes(-5)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
+    let status = athena(&[&rule]).status("q").await.unwrap();
+    assert_eq!(status.state, QueryState::Unknown("PAUSED".into()));
+    assert_eq!(status.statement_type, StatementType::Unknown);
+    assert_eq!(status.statistics.data_scanned_bytes, 0);
+    assert_eq!(status.statistics.total_execution_ms, 0);
+}
+
+#[tokio::test]
+async fn status_maps_ddl() {
+    let rule = mock!(Client::get_query_execution).then_output(|| {
+        GetQueryExecutionOutput::builder()
+            .query_execution(
+                QueryExecution::builder()
+                    .statement_type(SdkStatementType::Ddl)
+                    .status(
+                        QueryExecutionStatus::builder()
+                            .state(QueryExecutionState::Succeeded)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
+    let status = athena(&[&rule]).status("q").await.unwrap();
+    assert_eq!(status.statement_type, StatementType::Ddl);
+}
+
+#[tokio::test]
+async fn invalid_requests_are_permanent_and_throttles_are_retryable() {
+    let bad = mock!(Client::start_query_execution).then_error(|| {
+        StartQueryExecutionError::InvalidRequestException(
+            InvalidRequestException::builder().message("bad").build(),
+        )
+    });
+    let err = athena(&[&bad])
+        .start(StartRequest::default())
+        .await
+        .unwrap_err();
+    assert!(!err.retryable);
+    let busy = mock!(Client::start_query_execution).then_error(|| {
+        StartQueryExecutionError::TooManyRequestsException(
+            TooManyRequestsException::builder()
+                .message("slow down")
+                .build(),
+        )
+    });
+    let err = athena(&[&busy])
+        .start(StartRequest::default())
+        .await
+        .unwrap_err();
+    assert!(err.retryable);
+}
+
+#[tokio::test]
+async fn columns_use_the_label_when_it_is_set() {
+    let rule = mock!(Client::get_query_results).then_output(|| {
+        GetQueryResultsOutput::builder()
+            .result_set(
+                ResultSet::builder()
+                    .result_set_metadata(
+                        ResultSetMetadata::builder()
+                            .column_info(
+                                ColumnInfo::builder()
+                                    .name("_col0")
+                                    .label("total")
+                                    .r#type("bigint")
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
+    let page = athena(&[&rule]).results("q", None, 10).await.unwrap();
+    assert_eq!(page.columns, vec![Column::new("total", "bigint")]);
+}
+
+#[tokio::test]
+async fn results_keep_the_token_without_a_result_set() {
+    let rule = mock!(Client::get_query_results)
+        .then_output(|| GetQueryResultsOutput::builder().next_token("t-9").build());
+    let page = athena(&[&rule]).results("q", None, 10).await.unwrap();
+    assert_eq!(page.next_token.as_deref(), Some("t-9"));
+    assert!(page.rows.is_empty());
+}
+
+#[tokio::test]
+async fn a_disabled_workgroup_fails_the_check() {
+    let rule = mock!(Client::get_work_group).then_output(|| {
+        GetWorkGroupOutput::builder()
+            .work_group(
+                WorkGroup::builder()
+                    .name("primary")
+                    .state(WorkGroupState::Disabled)
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+    });
+    let err = athena(&[&rule])
+        .check_workgroup("primary")
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("disabled"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn each_call_names_its_operation_in_errors() {
+    use aws_sdk_athena::operation::get_query_execution::GetQueryExecutionError;
+    use aws_sdk_athena::operation::get_query_results::GetQueryResultsError;
+    use aws_sdk_athena::operation::stop_query_execution::StopQueryExecutionError;
+    let invalid = || InvalidRequestException::builder().message("x").build();
+    let status = mock!(Client::get_query_execution)
+        .then_error(move || GetQueryExecutionError::InvalidRequestException(invalid()));
+    let results = mock!(Client::get_query_results)
+        .then_error(move || GetQueryResultsError::InvalidRequestException(invalid()));
+    let stop = mock!(Client::stop_query_execution)
+        .then_error(move || StopQueryExecutionError::InvalidRequestException(invalid()));
+    let athena = athena(&[&status, &results, &stop]);
+    assert_eq!(
+        athena.status("q").await.unwrap_err().operation,
+        "GetQueryExecution"
+    );
+    assert_eq!(
+        athena.results("q", None, 1).await.unwrap_err().operation,
+        "GetQueryResults"
+    );
+    assert_eq!(
+        athena.stop("q").await.unwrap_err().operation,
+        "StopQueryExecution"
+    );
 }
 
 fn datum(value: Option<&str>) -> Datum {
@@ -321,4 +492,6 @@ async fn from_config_uses_the_region_and_the_endpoint() {
         sdk_config.region().map(ToString::to_string).as_deref(),
         Some("eu-west-1")
     );
+    let debug = format!("{sdk_config:?}");
+    assert!(debug.contains("localhost:4566"), "{debug}");
 }
