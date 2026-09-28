@@ -63,7 +63,10 @@ initial_ms = 100
     let config = AthenaConfig::resolve_with_env("athena", &env_for(dir.path())).unwrap();
     assert_eq!(config.region.as_deref(), Some("eu-west-1"));
     assert_eq!(config.database.as_deref(), Some("sales"));
-    assert_eq!(config.output_location.as_deref(), Some("s3://results/athena/"));
+    assert_eq!(
+        config.output_location.as_deref(),
+        Some("s3://results/athena/")
+    );
     assert_eq!(config.max_rows, 50);
     assert_eq!(config.poll.initial_ms, 100);
     assert_eq!(config.poll.max_ms, 2000);
@@ -72,7 +75,11 @@ initial_ms = 100
 #[test]
 fn reads_a_custom_section() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "autumn.toml", "[reports]\nworkgroup = \"reports\"\n");
+    write(
+        dir.path(),
+        "autumn.toml",
+        "[reports]\nworkgroup = \"reports\"\n",
+    );
     let config = AthenaConfig::resolve_with_env("reports", &env_for(dir.path())).unwrap();
     assert_eq!(config.workgroup, "reports");
 }
@@ -106,7 +113,11 @@ fn profile_file_overrides_the_inline_profile() {
         "autumn.toml",
         "[athena]\ndatabase = \"base\"\n[profile.staging.athena]\ndatabase = \"inline\"\n",
     );
-    write(dir.path(), "autumn-staging.toml", "[athena]\ndatabase = \"file\"\n");
+    write(
+        dir.path(),
+        "autumn-staging.toml",
+        "[athena]\ndatabase = \"file\"\n",
+    );
     let env = env_for(dir.path()).with("AUTUMN_PROFILE", "staging");
     let config = AthenaConfig::resolve_with_env("athena", &env).unwrap();
     assert_eq!(config.database.as_deref(), Some("file"));
@@ -115,7 +126,11 @@ fn profile_file_overrides_the_inline_profile() {
 #[test]
 fn environment_overrides_the_files() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "autumn.toml", "[athena]\ndatabase = \"base\"\nmax_rows = 5\n");
+    write(
+        dir.path(),
+        "autumn.toml",
+        "[athena]\ndatabase = \"base\"\nmax_rows = 5\n",
+    );
     let env = env_for(dir.path())
         .with("AUTUMN_ATHENA__DATABASE", "from_env")
         .with("AUTUMN_ATHENA__MAX_ROWS", "7")
@@ -216,4 +231,39 @@ fn valid_optional_values_pass() {
         ..AthenaConfig::default()
     };
     config.validate().unwrap();
+}
+
+fn leaf_paths(prefix: &str, table: &toml::Table, out: &mut Vec<String>) {
+    for (key, value) in table {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            toml::Value::Table(inner) => leaf_paths(&path, inner, out),
+            _ => out.push(path),
+        }
+    }
+}
+
+#[test]
+fn each_field_has_an_environment_variable() {
+    let full = AthenaConfig {
+        region: Some(String::new()),
+        endpoint_url: Some(String::new()),
+        catalog: Some(String::new()),
+        database: Some(String::new()),
+        output_location: Some(String::new()),
+        ..AthenaConfig::default()
+    };
+    let toml::Value::Table(table) = toml::Value::try_from(&full).unwrap() else {
+        panic!("a config must serialize as a table");
+    };
+    let mut fields = Vec::new();
+    leaf_paths("", &table, &mut fields);
+    fields.sort();
+    let mut leaves: Vec<String> = LEAVES.iter().map(|(path, _)| (*path).to_owned()).collect();
+    leaves.sort();
+    assert_eq!(fields, leaves);
 }
