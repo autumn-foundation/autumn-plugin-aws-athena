@@ -5,8 +5,9 @@
 //!
 //! # Contract
 //!
-//! - [`Param::to_sql`] gives exactly one SQL literal or one keyword.
-//! - A [`Param::Text`] literal decodes back to the input. Each `'` is doubled.
+//! - [`Param::to_sql`] gives exactly one SQL literal, keyword or parenthesized value.
+//! - Each text part is quoted, and each `'` in it is doubled. This is also true for unchecked variants.
+//! - A negative number is in parentheses, so a `-` before the placeholder cannot make a `--` comment.
 //! - Validated kinds (`decimal`, `date`, `timestamp`) contain only digits and separators.
 //! - [`quote_identifier`] gives one quoted identifier. Each `"` is doubled.
 
@@ -116,12 +117,14 @@ impl Param {
             Self::Bool(value) => value.to_string(),
             // The unsigned part of `i64::MIN` is out of `bigint` range.
             Self::Int(i64::MIN) => format!("BIGINT '{}'", i64::MIN),
+            Self::Int(value) if *value < 0 => format!("({value})"),
             Self::Int(value) => value.to_string(),
             Self::Double(value) => double_literal(*value),
             Self::Text(text) => quote(text, '\''),
-            Self::Decimal(text) => format!("DECIMAL '{text}'"),
-            Self::Date(text) => format!("DATE '{text}'"),
-            Self::Timestamp(text) => format!("TIMESTAMP '{text}'"),
+            // The constructors validate these kinds. Quoting also covers direct variant use.
+            Self::Decimal(text) => format!("DECIMAL {}", quote(text, '\'')),
+            Self::Date(text) => format!("DATE {}", quote(text, '\'')),
+            Self::Timestamp(text) => format!("TIMESTAMP {}", quote(text, '\'')),
             Self::Binary(bytes) => {
                 let mut sql = String::with_capacity(bytes.len() * 2 + 3);
                 sql.push_str("X'");
@@ -137,12 +140,17 @@ impl Param {
 
 /// Quotes an identifier for a DML statement, for example a table name.
 ///
+/// The result goes into the SQL text. Use it for DML only. Athena DDL uses backticks.
+///
 /// # Errors
 ///
-/// Returns [`ParamError`] if `name` is empty.
+/// Returns [`ParamError`] if `name` is empty or contains NUL.
 pub fn quote_identifier(name: &str) -> Result<String, ParamError> {
     if name.is_empty() {
         return Err(ParamError::new("identifier", "empty name"));
+    }
+    if name.contains('\0') {
+        return Err(ParamError::new("identifier", "the name contains NUL"));
     }
     Ok(quote(name, '"'))
 }
@@ -169,9 +177,11 @@ fn double_literal(value: f64) -> String {
         if value > 0.0 {
             "infinity()"
         } else {
-            "-infinity()"
+            "(-infinity())"
         }
         .to_owned()
+    } else if value.is_sign_negative() {
+        format!("({value:e})")
     } else {
         format!("{value:e}")
     }

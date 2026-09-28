@@ -317,10 +317,22 @@ fn hints_that_do_not_fit_fail() {
     struct AsFloat {
         v: f64,
     }
-    assert!(row(&[("status", "bigint")], &[Some("1")]).deserialize::<AsEnum>().is_err());
-    assert!(row(&[("v", "decimal(4,2)")], &[Some("12.00")]).deserialize::<AsInt>().is_err());
+    assert!(
+        row(&[("status", "bigint")], &[Some("1")])
+            .deserialize::<AsEnum>()
+            .is_err()
+    );
+    assert!(
+        row(&[("v", "decimal(4,2)")], &[Some("12.00")])
+            .deserialize::<AsInt>()
+            .is_err()
+    );
     // 2^53 + 1 has no exact f64.
-    assert!(row(&[("v", "bigint")], &[Some("9007199254740993")]).deserialize::<AsFloat>().is_err());
+    assert!(
+        row(&[("v", "bigint")], &[Some("9007199254740993")])
+            .deserialize::<AsFloat>()
+            .is_err()
+    );
 }
 
 #[test]
@@ -337,7 +349,10 @@ fn duplicate_labels_fail_for_a_struct() {
     struct Id {
         id: i64,
     }
-    let row = row(&[("id", "bigint"), ("id", "bigint")], &[Some("1"), Some("2")]);
+    let row = row(
+        &[("id", "bigint"), ("id", "bigint")],
+        &[Some("1"), Some("2")],
+    );
     let err = row.deserialize::<Id>().unwrap_err();
     assert_eq!(err.column(), "");
     assert!(err.to_string().contains("duplicate field"), "{err}");
@@ -360,6 +375,8 @@ fn a_decode_error_names_the_field() {
     struct Id {
         id: i64,
     }
-    let err = row(&[("id", "varchar")], &[Some("abc")]).deserialize::<Id>().unwrap_err();
+    let err = row(&[("id", "varchar")], &[Some("abc")])
+        .deserialize::<Id>()
+        .unwrap_err();
     assert!(err.to_string().contains("abc"), "{err}");
 }

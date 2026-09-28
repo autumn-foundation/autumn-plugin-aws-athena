@@ -97,7 +97,7 @@ pub(crate) fn parse(column: &Column, raw: Option<&str>) -> Result<Value, DecodeE
 fn parse_hex_pairs(raw: &str) -> Option<Vec<u8>> {
     raw.split_whitespace()
         .map(|pair| {
-            if pair.len() == 2 {
+            if pair.len() == 2 && pair.bytes().all(|b| b.is_ascii_hexdigit()) {
                 u8::from_str_radix(pair, 16).ok()
             } else {
                 None
@@ -147,6 +147,9 @@ impl Row {
     }
 }
 
+/// The largest integer that each smaller integer and it have an exact `f64`: 2^53.
+const MAX_EXACT_FLOAT_INT: u64 = 1 << 53;
+
 /// Reads a row as a map of labels, or as a sequence for tuples.
 struct RowDeserializer<'a>(&'a Row);
 
@@ -175,6 +178,11 @@ impl<'de> serde::Deserializer<'de> for RowDeserializer<'de> {
         SeqDeserializer::new(self.items()).deserialize_any(visitor)
     }
 
+    /// A row is always present, so `Option<T>` is `Some`.
+    fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
+        visitor.visit_some(self)
+    }
+
     fn deserialize_tuple<V: Visitor<'de>>(
         self,
         _len: usize,
@@ -194,11 +202,13 @@ impl<'de> serde::Deserializer<'de> for RowDeserializer<'de> {
 
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct newtype_struct map struct enum identifier ignored_any
+        bytes byte_buf unit unit_struct newtype_struct map struct enum identifier ignored_any
     }
 }
 
-/// Reads one value. Numeric and text hints convert where the conversion is exact.
+/// Reads one value. A numeric or text hint converts the value when it can.
+///
+/// An integer converts to a float only if the float is exact. Decimal text can round in a float.
 #[derive(Clone, Copy)]
 struct ValueDeserializer<'a>(&'a Value);
 
@@ -229,6 +239,12 @@ impl<'de> ValueDeserializer<'de> {
             if let Ok(v) = text.parse::<u64>() {
                 return visitor.visit_u64(v);
             }
+            if let Ok(v) = text.parse::<i128>() {
+                return visitor.visit_i128(v);
+            }
+            if let Ok(v) = text.parse::<u128>() {
+                return visitor.visit_u128(v);
+            }
         }
         self.deserialize_any(visitor)
     }
@@ -236,8 +252,14 @@ impl<'de> ValueDeserializer<'de> {
     fn float<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
         match (self.0, self.text().map(str::parse::<f64>)) {
             (_, Some(Ok(v))) => visitor.visit_f64(v),
-            #[allow(clippy::cast_precision_loss, reason = "a bigint read as a float")]
-            (Value::Int(v), _) => visitor.visit_f64(*v as f64),
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "the guard allows exact values only"
+            )]
+            (Value::Int(v), _) if v.unsigned_abs() <= MAX_EXACT_FLOAT_INT => {
+                visitor.visit_f64(*v as f64)
+            }
+            (Value::Int(_), _) => Err(DeError::custom("the integer has no exact float value")),
             _ => self.deserialize_any(visitor),
         }
     }
@@ -332,6 +354,12 @@ impl<'de> serde::Deserializer<'de> for ValueDeserializer<'de> {
     fn deserialize_u64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
         self.integer(visitor)
     }
+    fn deserialize_i128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
+        self.integer(visitor)
+    }
+    fn deserialize_u128<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
+        self.integer(visitor)
+    }
     fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
         self.float(visitor)
     }
@@ -340,7 +368,7 @@ impl<'de> serde::Deserializer<'de> for ValueDeserializer<'de> {
     }
 
     forward_to_deserialize_any! {
-        bool i128 u128 char bytes byte_buf unit unit_struct
+        bool char bytes byte_buf unit unit_struct
         tuple tuple_struct map struct identifier ignored_any
     }
 }

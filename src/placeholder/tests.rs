@@ -75,7 +75,9 @@ fn quotes_inside_comments_do_not_open_literals() {
 
 fn tricky_text() -> impl Strategy<Value = String> {
     proptest::collection::vec(
-        proptest::sample::select(vec!["'", "?", "\"", "`", "--", "/*", "*/", "\\", "\n", "\r", "a", " "]),
+        proptest::sample::select(vec![
+            "'", "?", "\"", "`", "--", "/*", "*/", "\\", "\n", "\r", "a", " ",
+        ]),
         0..20,
     )
     .prop_map(|parts: Vec<&str>| parts.concat())

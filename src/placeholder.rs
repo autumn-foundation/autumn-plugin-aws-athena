@@ -3,6 +3,7 @@
 //! # Contract
 //!
 //! - A `?` counts only outside `'…'`, `"…"` and `` `…` `` and outside `--` and `/* */` comments.
+//! - A `--` comment ends at `\n` or `\r`, as in Trino.
 //! - A doubled quote mark stays inside its literal.
 //! - An unterminated literal or comment continues to the end of the text.
 //! - Athena does the full parse. This count only finds a mismatch early.
@@ -17,7 +18,7 @@ pub(crate) fn count(sql: &str) -> usize {
             '\'' | '"' | '`' => skip_quoted(&mut chars, c),
             '-' if chars.peek() == Some(&'-') => {
                 // A line comment continues to the end of the line.
-                chars.find(|&c| c == '\n');
+                chars.find(|&c| c == '\n' || c == '\r');
             }
             '/' if chars.peek() == Some(&'*') => {
                 chars.next();

@@ -24,7 +24,9 @@ fn decode_string_literal(sql: &str) -> Option<String> {
 /// Text with many SQL marks: quotes, comments, escapes and line ends.
 fn tricky_text() -> impl Strategy<Value = String> {
     proptest::collection::vec(
-        proptest::sample::select(vec!["'", "''", "?", "\"", "`", "--", "/*", "*/", "\\", "\n", "\r", "\0", "é", "a", " "]),
+        proptest::sample::select(vec![
+            "'", "''", "?", "\"", "`", "--", "/*", "*/", "\\", "\n", "\r", "\0", "é", "a", " ",
+        ]),
         0..20,
     )
     .prop_map(|parts: Vec<&str>| parts.concat())
@@ -146,7 +148,10 @@ fn small_integer_and_float_conversions() {
     assert_eq!(Param::from(3_u16), Param::Int(3));
     assert_eq!(Param::from(0.5_f32), Param::Double(0.5));
     assert_eq!(Param::from(i64::MAX as u64), Param::Int(i64::MAX));
-    assert_eq!(Param::from(i64::MAX as u64 + 1), Param::Decimal("9223372036854775808".into()));
+    assert_eq!(
+        Param::from(i64::MAX as u64 + 1),
+        Param::Decimal("9223372036854775808".into())
+    );
 }
 
 #[test]
