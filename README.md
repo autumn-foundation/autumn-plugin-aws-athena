@@ -179,7 +179,7 @@ assert_eq!(fake.started()[0].parameters, vec!["'c-1'".to_owned()]);
 
 ## Compatibility
 
-- `autumn-web` 0.7.
+- `autumn-web` 0.8.
 - Rust 1.91 or later.
 
 ## License

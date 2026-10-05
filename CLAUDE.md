@@ -4,7 +4,7 @@ Guidance for agents that work on this crate.
 
 ## What this crate is
 
-`autumn-plugin-aws-athena` is an Autumn plugin. Autumn is `autumn-web` 0.7. Handlers run Amazon Athena queries through the `Athena` extractor. Read `docs/planning.md` before a design change.
+`autumn-plugin-aws-athena` is an Autumn plugin. Autumn is `autumn-web` 0.8. Handlers run Amazon Athena queries through the `Athena` extractor. Read `docs/planning.md` before a design change.
 
 ## Commands
 

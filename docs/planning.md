@@ -62,7 +62,7 @@ Question: "How can we make this plugin fail?" Each answer gives a countermeasure
 
 ### White hat (facts)
 
-- Autumn 0.7 gives `Plugin`, `on_startup`, `on_shutdown`, `health_indicator`, `metrics_source` and `config_section`.
+- Autumn 0.8 gives `Plugin`, `on_startup`, `on_shutdown`, `health_indicator`, `metrics_source` and `config_section`.
 - `Plugin::build` is synchronous. AWS config loads asynchronously, so the client starts in `on_startup`.
 - Athena states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED` and `CANCELLED`.
 - `GetQueryResults` returns 1000 rows or fewer on each page. All values are text.
