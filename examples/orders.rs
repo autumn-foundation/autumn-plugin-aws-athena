@@ -30,9 +30,11 @@ async fn orders(athena: Athena, Path(customer): Path<String>) -> AutumnResult<Js
 
 #[autumn_web::main]
 async fn main() {
-    autumn_web::app()
-        .plugin(AthenaPlugin::new())
-        .routes(routes![orders])
-        .run()
-        .await;
+    Box::pin(
+        autumn_web::app()
+            .plugin(AthenaPlugin::new())
+            .routes(routes![orders])
+            .run(),
+    )
+    .await;
 }
