@@ -4,7 +4,7 @@ Guidance for agents that work on this crate.
 
 ## What this crate is
 
-`autumn-plugin-aws-athena` is an Autumn plugin. Autumn is `autumn-web` 0.9. Handlers run Amazon Athena queries through the `Athena` extractor. Read `docs/planning.md` before a design change.
+`autumn-plugin-aws-athena` is an Autumn plugin. Autumn is `autumn-web` 0.10. Handlers run Amazon Athena queries through the `Athena` extractor. Read `docs/planning.md` before a design change.
 
 ## Commands
 
@@ -13,13 +13,13 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo check --locked --lib
 cargo test --locked --all-targets --all-features
-cargo +1.91.0 check --locked --all-targets --all-features
+cargo +1.97 check --locked --all-targets --all-features
 cargo test --locked --doc --all-features
 RUSTDOCFLAGS=-D\ warnings cargo doc --locked --no-deps --all-features
 cargo llvm-cov --locked --all-features --ignore-filename-regex '/tests\.rs$' --fail-under-lines 90
 ```
 
-The MSRV is 1.91. The lockfile holds AWS crates that support 1.91. Do not run `cargo update --ignore-rust-version` on the committed lockfile.
+The MSRV is 1.97, set by `autumn-web` 0.10. The lockfile holds AWS crates that support 1.97. Do not run `cargo update --ignore-rust-version` on the committed lockfile.
 
 ## Architecture
 

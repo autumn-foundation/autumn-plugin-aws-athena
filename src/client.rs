@@ -36,7 +36,7 @@ use crate::value::Row;
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The time limit to find and stop a query whose start did not complete.
-const RECOVER_TIMEOUT: Duration = Duration::from_secs(120);
+const RECOVER_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// The minimum time that a status call gets, also at the deadline.
 const CALL_GRACE: Duration = Duration::from_secs(1);
@@ -48,7 +48,7 @@ const MAX_STATUS_ERRORS: u32 = 3;
 const MAX_PARAMETER_CHARS: usize = 1024;
 
 /// The deadline for a timeout that is too large for the clock.
-const FAR_FUTURE: Duration = Duration::from_secs(30 * 365 * 24 * 60 * 60);
+const FAR_FUTURE: Duration = Duration::from_hours(30 * 365 * 24);
 
 /// A handle to Athena. Clones share one connection and one set of open queries.
 #[derive(Clone)]

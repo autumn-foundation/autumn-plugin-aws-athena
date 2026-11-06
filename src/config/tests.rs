@@ -22,7 +22,7 @@ fn env_for(dir: &Path) -> MockEnv {
 fn defaults_are_safe() {
     let config = AthenaConfig::default();
     assert_eq!(config.workgroup, "primary");
-    assert_eq!(config.timeout(), Duration::from_secs(300));
+    assert_eq!(config.timeout(), Duration::from_mins(5));
     assert_eq!(config.max_rows, 10_000);
     assert_eq!(config.page_size, 1000);
     assert_eq!(config.reuse_max_age_minutes, 0);
@@ -38,7 +38,7 @@ fn defaults_are_safe() {
 fn backoff_uses_the_poll_settings() {
     let backoff = AthenaConfig::default().backoff();
     assert_eq!(backoff.delay(0), Duration::from_millis(200));
-    assert_eq!(backoff.delay(10), Duration::from_millis(2000));
+    assert_eq!(backoff.delay(10), Duration::from_secs(2));
 }
 
 #[test]
