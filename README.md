@@ -12,7 +12,7 @@ An [Autumn](https://github.com/autumn-foundation/autumn) plugin for [Amazon Athe
 
 ```toml
 [dependencies]
-autumn-plugin-aws-athena = "0.2"
+autumn-plugin-aws-athena = "0.3"
 ```
 
 ```rust,ignore
@@ -154,7 +154,7 @@ Turn on the `test-support` feature for your tests:
 
 ```toml
 [dev-dependencies]
-autumn-plugin-aws-athena = { version = "0.2", features = ["test-support"] }
+autumn-plugin-aws-athena = { version = "0.3", features = ["test-support"] }
 ```
 
 Give `FakeAthena` to the plugin:
@@ -179,8 +179,8 @@ assert_eq!(fake.started()[0].parameters, vec!["'c-1'".to_owned()]);
 
 ## Compatibility
 
-- `autumn-web` 0.9.
-- Rust 1.91 or later.
+- `autumn-web` 0.10.
+- Rust 1.97 or later.
 
 ## License
 

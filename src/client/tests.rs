@@ -262,7 +262,7 @@ async fn unknown_states_keep_the_poll_going_with_backoff() {
     let started = tokio::time::Instant::now();
     athena(&fake).query("SELECT 1").execute().await.unwrap();
     // The poll delays are 200, 400, 800 and 1600 ms.
-    assert_eq!(started.elapsed(), Duration::from_millis(3000));
+    assert_eq!(started.elapsed(), Duration::from_secs(3));
 }
 
 #[tokio::test(start_paused = true)]
@@ -529,7 +529,7 @@ async fn each_start_has_a_client_request_token() {
 #[tokio::test(start_paused = true)]
 async fn a_hung_start_times_out_and_the_query_stops() {
     let fake = FakeAthena::new();
-    fake.push(FakeQuery::pending().start_delay(Duration::from_secs(60)));
+    fake.push(FakeQuery::pending().start_delay(Duration::from_mins(1)));
     let athena = athena(&fake);
     let err = athena
         .query("SELECT 1")
@@ -540,7 +540,7 @@ async fn a_hung_start_times_out_and_the_query_stops() {
     assert!(matches!(err, AthenaError::Timeout { .. }), "{err:?}");
     assert_eq!(err.query_id(), None);
     // A second start with the same token finds the query. Then the plugin stops it.
-    tokio::time::sleep(Duration::from_secs(180)).await;
+    tokio::time::sleep(Duration::from_mins(3)).await;
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
 }
 
@@ -556,7 +556,7 @@ async fn dropping_a_query_during_the_start_stops_it() {
     tokio::time::sleep(Duration::from_secs(1)).await;
     task.abort();
     let _ = task.await;
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    tokio::time::sleep(Duration::from_mins(1)).await;
     assert_eq!(fake.stopped(), vec!["fake-1".to_owned()]);
 }
 
@@ -567,7 +567,7 @@ async fn a_hung_status_call_times_out_and_stops() {
     fake.push(
         FakeQuery::pending()
             .data_scanned(500)
-            .status_delay(Duration::from_secs(60)),
+            .status_delay(Duration::from_mins(1)),
     );
     let athena = athena(&fake);
     let started = tokio::time::Instant::now();
@@ -621,7 +621,7 @@ async fn a_timeout_records_the_bytes_of_the_last_poll() {
 #[tokio::test(start_paused = true)]
 async fn a_slow_results_read_is_a_timeout() {
     let fake = FakeAthena::new();
-    fake.push(orders().results_delay(Duration::from_secs(60)));
+    fake.push(orders().results_delay(Duration::from_mins(1)));
     let err = athena(&fake)
         .query("SELECT 1")
         .timeout(Duration::from_secs(5))
