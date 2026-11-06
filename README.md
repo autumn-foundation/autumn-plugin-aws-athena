@@ -15,7 +15,7 @@ An [Autumn](https://github.com/autumn-foundation/autumn) plugin for [Amazon Athe
 autumn-plugin-aws-athena = "0.3"
 ```
 
-```rust,ignore
+```rust,no_run
 use autumn_plugin_aws_athena::{Athena, AthenaPlugin, AthenaResultExt as _};
 use autumn_web::prelude::*;
 
@@ -159,22 +159,44 @@ autumn-plugin-aws-athena = { version = "0.3", features = ["test-support"] }
 
 Give `FakeAthena` to the plugin:
 
-```rust,ignore
+```rust,no_run
 use autumn_plugin_aws_athena::testing::{FakeAthena, FakeQuery};
-use autumn_plugin_aws_athena::{AthenaConfig, AthenaPlugin};
+use autumn_plugin_aws_athena::{Athena, AthenaConfig, AthenaPlugin, AthenaResultExt as _};
+use autumn_web::prelude::*;
+use autumn_web::test::TestApp;
 
-let fake = FakeAthena::new();
-fake.push(
-    FakeQuery::succeeded()
-        .columns(&[("id", "bigint"), ("total", "double")])
-        .row(&[Some("1"), Some("9.5")]),
-);
-let client = autumn_web::test::TestApp::new()
-    .routes(routes![orders])
-    .plugin(AthenaPlugin::new().config(AthenaConfig::default()).api(fake.clone()))
-    .build();
-client.get("/customers/c-1/orders").send().await.assert_ok();
-assert_eq!(fake.started()[0].parameters, vec!["'c-1'".to_owned()]);
+#[derive(serde::Deserialize, serde::Serialize)]
+struct Order {
+    id: i64,
+    total: f64,
+}
+
+#[get("/customers/{id}/orders")]
+async fn orders(athena: Athena, Path(id): Path<String>) -> AutumnResult<Json<Vec<Order>>> {
+    let rows = athena
+        .query("SELECT id, total FROM orders WHERE customer_id = ?")
+        .bind(id)
+        .fetch_as::<Order>()
+        .await
+        .or_http()?;
+    Ok(Json(rows))
+}
+
+#[tokio::test]
+async fn orders_bind_the_customer_id() {
+    let fake = FakeAthena::new();
+    fake.push(
+        FakeQuery::succeeded()
+            .columns(&[("id", "bigint"), ("total", "double")])
+            .row(&[Some("1"), Some("9.5")]),
+    );
+    let client = TestApp::new()
+        .routes(routes![orders])
+        .plugin(AthenaPlugin::new().config(AthenaConfig::default()).api(fake.clone()))
+        .build();
+    client.get("/customers/c-1/orders").send().await.assert_ok();
+    assert_eq!(fake.started()[0].parameters, vec!["'c-1'".to_owned()]);
+}
 ```
 
 ## Compatibility

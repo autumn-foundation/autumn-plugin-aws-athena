@@ -44,6 +44,8 @@ Each pure module has a `# Contract` doc section. Change the contract first. Then
 
 ## Rules
 
+- README Rust snippets are doctests. Make them compile; use `no_run`, not `ignore`.
+  `tests/doc_snippets.rs` checks the TOML snippets and the version pins in the docs.
 - Work red, green, refactor. Write the failing test first.
 - Put unit tests in `src/<module>/tests.rs`. The coverage gate ignores these files.
 - Production code has no `unwrap`, `expect` or `panic`. Clippy denies them outside tests.
