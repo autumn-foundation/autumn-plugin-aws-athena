@@ -65,3 +65,8 @@ pub use literal::Param;
 pub use plugin::{AthenaPlugin, PLUGIN_NAME};
 pub use sdk::SdkAthena;
 pub use value::{Row, Value};
+
+/// Compiles the Rust snippets of the README as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
