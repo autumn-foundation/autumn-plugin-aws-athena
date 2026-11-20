@@ -12,7 +12,7 @@ An [Autumn](https://github.com/autumn-foundation/autumn) plugin for [Amazon Athe
 
 ```toml
 [dependencies]
-autumn-plugin-aws-athena = "0.3"
+autumn-plugin-aws-athena = "0.4"
 ```
 
 ```rust,no_run
@@ -154,7 +154,7 @@ Turn on the `test-support` feature for your tests:
 
 ```toml
 [dev-dependencies]
-autumn-plugin-aws-athena = { version = "0.3", features = ["test-support"] }
+autumn-plugin-aws-athena = { version = "0.4", features = ["test-support"] }
 ```
 
 Give `FakeAthena` to the plugin:
@@ -201,7 +201,7 @@ async fn orders_bind_the_customer_id() {
 
 ## Compatibility
 
-- `autumn-web` 0.10.
+- `autumn-web` 0.11.
 - Rust 1.97 or later.
 
 ## License
