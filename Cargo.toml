@@ -1,6 +1,6 @@
 [package]
 name = "autumn-plugin-aws-athena"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.97"
 description = "Autumn plugin: run Amazon Athena SQL queries from Autumn handlers."
@@ -18,7 +18,7 @@ test-support = []
 
 [dependencies]
 # No default features: the host app selects the Autumn features.
-autumn-web = { version = ">=0.10, <0.11", default-features = false }
+autumn-web = { version = ">=0.11, <0.12", default-features = false }
 aws-config = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client", "credentials-process", "sso"] }
 aws-sdk-athena = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 axum = { version = "0.8", default-features = false }
